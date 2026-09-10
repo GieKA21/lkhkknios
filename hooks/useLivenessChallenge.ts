@@ -3,8 +3,15 @@ import type { Face } from "react-native-vision-camera-face-detector";
 import { MIN_FACE_SIZE_RATIO } from "../utils/faceAuthNative";
 
 /**
- * Deteksi keaktifan (liveness) berbasis TANTANGAN GERAK, untuk mencegah
- * titip-absen dengan foto/layar.
+ * SUB-AGEN LIVENESS dari agen verifikasi wajah (lihat
+ * utils/verificationAgent.ts untuk PEAS lengkap). Ini bagian yang paling
+ * "agen": bukan sekali jalan, melainkan loop reaktif-berstate - mengindra
+ * sudut kepala (yaw), MEMILIH instruksi berikutnya dari state internal
+ * (tolehan pertama beserta tandanya), lalu bertindak (menampilkan instruksi),
+ * berulang sampai mencapai goal "passed".
+ *
+ * Deteksi keaktifan berbasis TANTANGAN GERAK, untuk mencegah titip-absen
+ * dengan foto/layar.
  *
  * MASALAH YANG DITUTUP: verifikasi wajah hanya menjawab "apakah ini wajah
  * yang benar?", bukan "apakah wajah HIDUP yang hadir sekarang?". Foto statis

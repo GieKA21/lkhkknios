@@ -20,7 +20,6 @@ import { Camera as FaceDetectorCamera } from "react-native-vision-camera-face-de
 import type { Face } from "react-native-vision-camera-face-detector";
 import {
     FACE_DETECTOR_OPTIONS,
-    FACE_MATCH_THRESHOLD,
     getFaceEmbedding,
     logSimilaritySample,
     MultipleFacesDetectedError,
@@ -28,10 +27,10 @@ import {
     PoorQualityFaceError,
 } from "../utils/faceAuthNative";
 import {
-    similarityToEnrollment,
     isEnrolled,
     syncEnrollmentFromServer,
 } from "../utils/faceEnrollment";
+import { decideAttendance } from "../utils/verificationAgent";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
@@ -571,13 +570,12 @@ export default function LKHScreen() {
         return;
       }
 
-      // Verifikasi max-of-N: bandingkan ke SEMUA embedding terdaftar dan
-      // ambil MEDIAN-nya, bukan yang tertinggi - lihat catatan panjang di
-      // similarityToEnrollment(): max-of-N memberi impostor N kesempatan
-      // menembus ambang, dan itulah sebab wajah orang lain bisa lolos.
-      const similarity = await similarityToEnrollment(embedding);
+      // Putusan agen verifikasi: median-of-N terhadap set terdaftar lalu
+      // dibandingkan ambang - lihat utils/verificationAgent.ts (PEAS + tipe
+      // agen) dan catatan median di similarityToEnrollment().
+      const verdict = await decideAttendance(embedding);
 
-      if (similarity === null) {
+      if (verdict.kind === "not-enrolled") {
         // Set wajah hilang di tengah jalan (misal di-reset dari halaman
         // Profil) - jalur enroll-diam-diam sudah dihapus, jadi arahkan ke
         // modal pendaftaran resmi alih-alih menjadikan foto ini patokan.
@@ -586,12 +584,12 @@ export default function LKHScreen() {
         return;
       }
 
-      await logSimilaritySample(similarity, "unknown");
+      await logSimilaritySample(verdict.similarity, "unknown");
       // Presisi 2 desimal sengaja dipakai sementara (bukan dibulatkan ke
       // bilangan bulat) supaya angka kemiripan yang asli kelihatan buat
       // kalibrasi - "100%" yang dibulatkan bisa saja aslinya 99.4%.
-      const similarityLabel = (similarity * 100).toFixed(2);
-      if (similarity < FACE_MATCH_THRESHOLD) {
+      const similarityLabel = (verdict.similarity * 100).toFixed(2);
+      if (verdict.kind === "rejected") {
         Alert.alert(
           "Wajah Tidak Cocok",
           `Wajah pada foto tidak cocok dengan wajah patokan absensi Anda (kemiripan ${similarityLabel}%). Absensi tidak disimpan.`,
