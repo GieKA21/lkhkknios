@@ -17,6 +17,7 @@ import {
 
 import { startDemoSession } from "../utils/demoMode";
 import { getDeviceInfoObject, APP_VERSION, API_USER_AGENT } from "../utils/deviceInfo";
+import { API_BASE } from "../utils/api";
 import Constants from "expo-constants";
 
 export default function LoginScreen({ onLoginSuccess }) {
@@ -45,7 +46,7 @@ export default function LoginScreen({ onLoginSuccess }) {
 
       // 1. Request Token Login
       const response = await fetch(
-        "https://lkh-kkn.uin-alauddin.ac.id/auth/get-token",
+        `${API_BASE}/auth/get-token`,
         {
           method: "POST",
           headers: { "User-Agent": API_USER_AGENT },
@@ -93,7 +94,7 @@ export default function LoginScreen({ onLoginSuccess }) {
         // 2. Ambil data profil HANYA dari endpoint /api/peserta
         try {
           const pesertaRes = await fetch(
-            `https://lkh-kkn.uin-alauddin.ac.id/api/peserta?nim=${nim}&device_info=${encodeURIComponent(deviceInfoStr)}&version=${APP_VERSION}`,
+            `${API_BASE}/api/peserta?nim=${nim}&device_info=${encodeURIComponent(deviceInfoStr)}&version=${APP_VERSION}`,
             {
               method: "GET",
               headers: {

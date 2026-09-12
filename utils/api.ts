@@ -16,7 +16,14 @@ import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
  * Modul ini tidak mengubah perilaku apa pun, hanya menyatukan aturannya.
  */
 
-const API_BASE = "https://lkh-kkn.uin-alauddin.ac.id";
+// Host server LKH KKN - SATU sumber kebenaran untuk seluruh aplikasi
+// (LKHScreen, LoginScreen, faceServer, foto profil semua mengimpor ini).
+// Ganti dev<->prod cukup di satu baris ini:
+//   dev  : https://lkh-dev.uin-alauddin.ac.id  (dipakai source Flutter dosen)
+//   prod : https://lkh-kkn.uin-alauddin.ac.id
+// Sekarang MENGIKUTI source dosen (dev) supaya sinkronisasi wajah bisa diuji
+// dengan akun yang sama - akun sebelumnya 422 di prod.
+export const API_BASE = "https://lkh-dev.uin-alauddin.ac.id";
 
 /** Server membalas HTML, bukan JSON - token kadaluarsa atau diblokir WAF. */
 class SessionExpiredError extends Error {}

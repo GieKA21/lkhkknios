@@ -15,7 +15,7 @@ export const APP_VERSION = "1.1.1";
 
 /**
  * User-Agent that mirrors the official Flutter/Dart app. Cloudflare's WAF in
- * front of lkh-kkn.uin-alauddin.ac.id blocks requests whose User-Agent is not
+ * front of the LKH server (lihat API_BASE di utils/api.ts) blocks requests whose User-Agent is not
  * a Dart one (verified via scripts/login-probe3.ps1 variant 3/4: identical
  * POST reached the backend with this UA but got an HTML block page without
  * it). Every request to that server - fetch() AND <Image> sources alike -

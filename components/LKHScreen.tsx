@@ -44,6 +44,7 @@ import {
 } from "../utils/geofence";
 import { APP_VERSION, API_USER_AGENT, getDeviceInfoStr } from "../utils/deviceInfo";
 import {
+    API_BASE,
     downloadProfilePhoto,
     profilePhotoHeaders,
     profilePhotoUrl,
@@ -294,7 +295,7 @@ export default function LKHScreen() {
       const nim = await AsyncStorage.getItem("@user_nim");
       if (!currentToken || !nim) return;
 
-      const url = `https://lkh-kkn.uin-alauddin.ac.id/api/lkh?nim=${nim}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
+      const url = `${API_BASE}/api/lkh?nim=${nim}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
 
       const response = await fetch(url, {
         method: "GET",
@@ -627,7 +628,7 @@ export default function LKHScreen() {
   // dengan pesan validasi tertentu, itu yang jadi patokan buat koreksi nama
   // field selanjutnya (makanya pesan error asli dari server ditampilkan ke
   // pengguna, bukan cuma "gagal").
-  const SIMPAN_LKH_URL = "https://lkh-kkn.uin-alauddin.ac.id/api/simpan-lkh";
+  const SIMPAN_LKH_URL = `${API_BASE}/api/simpan-lkh`;
 
   const syncOneRecord = async (
     nim: string,
