@@ -238,14 +238,25 @@ export async function syncEnrollmentFromServer(): Promise<SyncOutcome> {
 
   try {
     const remote = await fetchServerEnrollment(id, token);
-    if (remote) {
+
+    // JANGAN adopsi wajah dari aplikasi RESMI (Flutter). Aplikasi resmi
+    // menyimpan SATU embedding hasil box-crop; aplikasi ini menyimpan 3-5
+    // hasil alignment kanonik. Keduanya TIDAK sebanding - kalau data
+    // single-embedding resmi diadopsi sebagai "sudah terdaftar", verifikasi
+    // menolak wajah asli pemiliknya sendiri (skor lintas-metode ~0.28 vs
+    // ambang 0.47). Jumlah embedding adalah penanda formatnya: >= MIN berarti
+    // milik aplikasi ini; < MIN (praktisnya = 1) berarti format resmi lama,
+    // diabaikan lalu ditimpa saat pengguna mendaftar/mengirim ulang.
+    const remoteIsOurs = remote !== null && remote.length >= MIN_ENROLLMENT_PHOTOS;
+    if (remoteIsOurs) {
       const local = await readLocalEnrollment(keys);
-      await writeLocalEnrollment(remote, local?.photos ?? [], keys.enrollment);
+      await writeLocalEnrollment(remote!, local?.photos ?? [], keys.enrollment);
       await AsyncStorage.removeItem(keys.pendingPush);
       return "updated";
     }
-    // Server terjangkau tapi belum punya wajah untuk akun ini. Kalau ada
-    // salinan lokal, kirim - jangan hapus lokalnya.
+    // Server kosong ATAU cuma berisi format resmi lama yang tak sebanding -
+    // perlakukan sebagai "belum ada wajah kita". Kalau ada salinan lokal
+    // (format kita), kirim untuk menimpanya; jangan hapus lokalnya.
     const local = await readLocalEnrollment(keys);
     if (local) {
       await pushServerEnrollment(id, token, local.embeddings);
