@@ -302,6 +302,8 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                 onPress: async () => {
                   await AsyncStorage.removeItem("@user_token");
                   await AsyncStorage.removeItem("@user_nim");
+                  await AsyncStorage.removeItem("@user_id");
+                  await AsyncStorage.removeItem("@user_role");
                   await AsyncStorage.removeItem("@user_profile");
                   // Sesi demo (Masuk Mode Demo di LoginScreen) menyalakan
                   // @demo_mode - matikan ikut di sini supaya sesi demo benar-

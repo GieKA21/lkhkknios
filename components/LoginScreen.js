@@ -15,9 +15,10 @@ import {
   View,
 } from "react-native";
 
-import { startDemoSession } from "../utils/demoMode";
+import { startDemoSession, startDemoPembimbingSession } from "../utils/demoMode";
 import { getDeviceInfoObject, APP_VERSION, API_USER_AGENT } from "../utils/deviceInfo";
 import { API_BASE } from "../utils/api";
+import { fetchPembimbing } from "../utils/pembimbingApi";
 import Constants from "expo-constants";
 
 export default function LoginScreen({ onLoginSuccess }) {
@@ -90,6 +91,8 @@ export default function LoginScreen({ onLoginSuccess }) {
       if (response.ok && result.token) {
         await AsyncStorage.setItem("@user_token", result.token);
         await AsyncStorage.setItem("@user_nim", nim);
+        // Peran menentukan layar setelah login (lihat app/(tabs)/index.tsx).
+        await AsyncStorage.setItem("@user_role", "peserta");
 
         // 2. Ambil data profil HANYA dari endpoint /api/peserta
         try {
@@ -215,6 +218,111 @@ export default function LoginScreen({ onLoginSuccess }) {
     }
   };
 
+  // Login PEMBIMBING (dosen). Alur mengikuti source Flutter resmi
+  // (doLoginPembimbing): auth get-token yang SAMA, lalu ambil profil lewat
+  // /api/pembimbing dengan NIP (field input dipakai sebagai NIP di tab dosen).
+  // Tidak ada enrollment wajah di sisi pembimbing - langsung ke dashboard.
+  const handleLoginPembimbing = async () => {
+    if (!nim || !password) {
+      Alert.alert("Perhatian", "NIP dan Password tidak boleh kosong!");
+      return;
+    }
+    setIsLoading(true);
+    const deviceInfoStr = JSON.stringify(getDeviceInfoObject());
+    try {
+      const formData = new FormData();
+      formData.append("username", nim);
+      formData.append("password", password);
+      formData.append("version", APP_VERSION);
+      formData.append("device_info", deviceInfoStr);
+
+      const response = await fetch(`${API_BASE}/auth/get-token`, {
+        method: "POST",
+        headers: { "User-Agent": API_USER_AGENT },
+        body: formData,
+      });
+      const rawText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(rawText);
+      } catch (_e) {
+        Alert.alert(
+          "Gagal Login",
+          `Server merespons non-JSON (HTTP ${response.status}). Kemungkinan diblokir WAF - coba lagi.`,
+        );
+        return;
+      }
+
+      if (!(response.ok && result.token)) {
+        const detail =
+          result.desc || result.message || "(server tidak mengirim pesan)";
+        Alert.alert(
+          "Gagal Login",
+          `${detail}\n\n[debug] HTTP ${response.status} | body: ${rawText.slice(0, 200)}`,
+        );
+        return;
+      }
+
+      await AsyncStorage.setItem("@user_token", result.token);
+      await AsyncStorage.setItem("@user_nim", nim);
+      await AsyncStorage.setItem("@user_role", "pembimbing");
+
+      // Profil pembimbing: /api/pembimbing mengembalikan id/kode/nama/pegFoto.
+      try {
+        const p = await fetchPembimbing(nim, result.token);
+        const profile = {
+          nip: p.kode ?? nim,
+          nama: p.nama ?? "Pembimbing",
+          foto: p.pegFoto ?? p.foto ?? "",
+          prodi: p.prodi?.nama ?? "",
+          fakultas: p.prodi?.fakultas?.nama ?? "",
+        };
+        await AsyncStorage.setItem("@user_profile", JSON.stringify(profile));
+        if (p.id != null) await AsyncStorage.setItem("@user_id", String(p.id));
+      } catch (_profileErr) {
+        // Profil gagal diambil - tetap masuk dengan profil minimal supaya
+        // dashboard bisa mencoba menarik daftar bimbingan sendiri.
+        await AsyncStorage.setItem(
+          "@user_profile",
+          JSON.stringify({ nip: nim, nama: "Pembimbing", foto: "" }),
+        );
+      }
+
+      Alert.alert("Berhasil", "Login pembimbing berhasil!", [
+        { text: "OK", onPress: () => onLoginSuccess && onLoginSuccess() },
+      ]);
+    } catch (error) {
+      console.error("Login Pembimbing Error:", error);
+      Alert.alert("Error", "Terjadi kesalahan koneksi ke server.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Demo pembimbing: sesi lokal tanpa server (sample data di PembimbingScreen),
+  // supaya sisi pembimbing bisa didemokan tanpa akun dosen di server dev.
+  const handleDemoPembimbing = () => {
+    Alert.alert(
+      "Masuk Demo Pembimbing",
+      "Mode demo pembimbing memakai data mahasiswa contoh tanpa menghubungi server. Cocok untuk mencoba tampilan sisi pembimbing sebelum ada akun dosen.",
+      [
+        { text: "Batal", style: "cancel" },
+        {
+          text: "Masuk Demo",
+          onPress: async () => {
+            try {
+              await startDemoPembimbingSession();
+              if (onLoginSuccess) onLoginSuccess();
+            } catch (e) {
+              console.error("Gagal masuk demo pembimbing:", e);
+              Alert.alert("Error", "Gagal menyiapkan sesi demo pembimbing.");
+            }
+          },
+        },
+      ],
+    );
+  };
+
   // Login lokal tanpa server: akun KKN terikat periode angkatan, jadi setelah
   // masa KKN selesai server menolak login selamanya (401 "invalid credentials"
   // di semua varian request - lihat scripts/login-probe*.ps1). Sesi demo
@@ -304,7 +412,9 @@ export default function LoginScreen({ onLoginSuccess }) {
           </View>
 
           <Text style={styles.instructionText}>
-            Silahkan Masukkan NIM dan Password Portal Anda.
+            {activeTab === "dosen"
+              ? "Silahkan Masukkan NIP dan Password Portal Anda."
+              : "Silahkan Masukkan NIM dan Password Portal Anda."}
           </Text>
 
           <View style={styles.inputContainer}>
@@ -316,7 +426,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             />
             <TextInput
               style={styles.input}
-              placeholder="NIM"
+              placeholder={activeTab === "dosen" ? "NIP" : "NIM"}
               placeholderTextColor="#999"
               value={nim}
               onChangeText={setNim}
@@ -355,7 +465,7 @@ export default function LoginScreen({ onLoginSuccess }) {
 
           <TouchableOpacity
             style={styles.loginButton}
-            onPress={handleLogin}
+            onPress={activeTab === "dosen" ? handleLoginPembimbing : handleLogin}
             disabled={isLoading}
             activeOpacity={0.8}
           >
@@ -375,7 +485,9 @@ export default function LoginScreen({ onLoginSuccess }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.demoButton}
-            onPress={handleDemoLogin}
+            onPress={
+              activeTab === "dosen" ? handleDemoPembimbing : handleDemoLogin
+            }
             activeOpacity={0.8}
           >
             <View style={styles.buttonContent}>
@@ -385,7 +497,11 @@ export default function LoginScreen({ onLoginSuccess }) {
                 color="#0B753A"
                 style={{ marginRight: 8 }}
               />
-              <Text style={styles.demoButtonText}>MASUK MODE DEMO</Text>
+              <Text style={styles.demoButtonText}>
+                {activeTab === "dosen"
+                  ? "MASUK DEMO PEMBIMBING"
+                  : "MASUK MODE DEMO"}
+              </Text>
             </View>
           </TouchableOpacity>
         </View>

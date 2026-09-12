@@ -67,5 +67,32 @@ export async function startDemoSession(): Promise<void> {
   await AsyncStorage.setItem("@user_token", DEMO_TOKEN);
   await AsyncStorage.setItem("@user_nim", DEMO_PROFILE.nim);
   await AsyncStorage.setItem("@user_profile", JSON.stringify(DEMO_PROFILE));
+  await AsyncStorage.setItem("@user_role", "peserta");
+  await setDemoMode(true);
+}
+
+/**
+ * Profil pembimbing dummy untuk sesi demo - dipakai agar sisi pembimbing bisa
+ * dibangun & didemokan TANPA akun pembimbing di server dev (yang belum ada).
+ * PembimbingScreen mendeteksi sesi demo lewat token === DEMO_TOKEN, lalu
+ * menampilkan daftar mahasiswa contoh alih-alih memanggil server.
+ */
+export const DEMO_PEMBIMBING_PROFILE = {
+  nip: "DEMO-DOSEN",
+  nama: "Pembimbing Demo",
+  foto: "",
+  prodi: "[Mode Demo] Prodi",
+  fakultas: "[Mode Demo] Fakultas",
+};
+
+/** Login demo sebagai PEMBIMBING (peran "pembimbing"), tanpa server. */
+export async function startDemoPembimbingSession(): Promise<void> {
+  await AsyncStorage.setItem("@user_token", DEMO_TOKEN);
+  await AsyncStorage.setItem("@user_nim", DEMO_PEMBIMBING_PROFILE.nip);
+  await AsyncStorage.setItem(
+    "@user_profile",
+    JSON.stringify(DEMO_PEMBIMBING_PROFILE),
+  );
+  await AsyncStorage.setItem("@user_role", "pembimbing");
   await setDemoMode(true);
 }

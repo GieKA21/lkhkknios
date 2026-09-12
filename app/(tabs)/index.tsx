@@ -14,28 +14,35 @@ import {
 
 import LKHScreen from "../../components/LKHScreen";
 import LoginScreen from "../../components/LoginScreen";
+import PembimbingScreen from "../../components/PembimbingScreen";
 import ProfileScreen from "../../components/ProfileScreen";
 
 export default function Index() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [currentTab, setCurrentTab] = useState<"lkh" | "profile">("lkh");
+  // Peran menentukan aplikasi mana yang tampil: peserta (LKH+Profil) atau
+  // pembimbing (dashboard bimbingan). Disimpan saat login (@user_role).
+  const [role, setRole] = useState<"peserta" | "pembimbing">("peserta");
+
+  // Baca sesi + peran. Dipakai saat mount DAN dipanggil ulang setelah login
+  // (onLoginSuccess) - tanpa itu, login pembimbing tetap menampilkan layar
+  // peserta karena state peran belum disegarkan.
+  const refreshAuth = async () => {
+    try {
+      const [token, savedRole] = await Promise.all([
+        AsyncStorage.getItem("@user_token"),
+        AsyncStorage.getItem("@user_role"),
+      ]);
+      setIsLoggedIn(!!token);
+      setRole(savedRole === "pembimbing" ? "pembimbing" : "peserta");
+    } catch (error) {
+      console.error("Gagal mengecek status login", error);
+    }
+  };
 
   useEffect(() => {
-    const checkAuthStatus = async () => {
-      try {
-        const token = await AsyncStorage.getItem("@user_token");
-        if (token) {
-          setIsLoggedIn(true);
-        }
-      } catch (error) {
-        console.error("Gagal mengecek status login", error);
-      } finally {
-        setIsCheckingAuth(false);
-      }
-    };
-
-    checkAuthStatus();
+    refreshAuth().finally(() => setIsCheckingAuth(false));
   }, []);
 
   if (isCheckingAuth) {
@@ -50,7 +57,19 @@ export default function Index() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar style="dark" />
-        <LoginScreen onLoginSuccess={() => setIsLoggedIn(true)} />
+        <LoginScreen onLoginSuccess={refreshAuth} />
+      </SafeAreaView>
+    );
+  }
+
+  // Pembimbing: dashboard sendiri, tanpa tab bar peserta.
+  if (role === "pembimbing") {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="dark" />
+        <View style={styles.content}>
+          <PembimbingScreen onLogout={refreshAuth} />
+        </View>
       </SafeAreaView>
     );
   }
