@@ -18,12 +18,19 @@ import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
 
 // Host server LKH KKN - SATU sumber kebenaran untuk seluruh aplikasi
 // (LKHScreen, LoginScreen, faceServer, foto profil semua mengimpor ini).
-// Ganti dev<->prod cukup di satu baris ini:
-//   dev  : https://lkh-dev.uin-alauddin.ac.id  (dipakai source Flutter dosen)
-//   prod : https://lkh-kkn.uin-alauddin.ac.id
-// Sekarang MENGIKUTI source dosen (dev) supaya sinkronisasi wajah bisa diuji
-// dengan akun yang sama - akun sebelumnya 422 di prod.
-export const API_BASE = "https://lkh-dev.uin-alauddin.ac.id";
+//
+//   prod : https://lkh-kkn.uin-alauddin.ac.id  <- DIPAKAI. Publik, HTTP 200.
+//   dev  : https://lkh-dev.uin-alauddin.ac.id  <- source Flutter dosen, TAPI
+//          server INTERNAL kampus: TIDAK bisa dijangkau dari internet publik
+//          (diverifikasi: connect gagal/000 dari luar jaringan kampus). Login
+//          dari HP biasa akan "kesalahan koneksi". Hanya berguna kalau HP ada
+//          di jaringan kampus / VPN dosen.
+//
+// Akun KKN aktif mahasiswa ada di PROD, jadi prod adalah default yang benar.
+// Endpoint wajah & pembimbing yang direkonstruksi ada di prod juga (semua
+// dari APK yang menembak prod). Ganti ke dev hanya untuk uji di jaringan
+// kampus - cukup satu baris di bawah.
+export const API_BASE = "https://lkh-kkn.uin-alauddin.ac.id";
 
 /** Server membalas HTML, bukan JSON - token kadaluarsa atau diblokir WAF. */
 class SessionExpiredError extends Error {}

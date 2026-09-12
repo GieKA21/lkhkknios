@@ -25,8 +25,9 @@ import { DEMO_TOKEN } from "./demoMode";
  * pengguna lewat ApiError - itu patokan koreksi berikutnya.
  *
  * BELUM DIVERIFIKASI LIVE: format ini benar menurut source, tapi belum
- * pernah diuji terhadap server dengan akun valid (dulu 422). Server aktif
- * kini lkh-dev (mengikuti source dosen) - lihat API_BASE di api.ts.
+ * pernah diuji terhadap server dengan akun valid. Server aktif = prod
+ * (lkh-kkn); lkh-dev dosen internal kampus, tak terjangkau publik - lihat
+ * API_BASE di api.ts.
  */
 
 const PATH_FETCH = "/api/face-data";
