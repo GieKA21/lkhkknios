@@ -72,13 +72,18 @@ export type SyncOutcome = "updated" | "pushed" | "pending" | "unavailable";
 
 let migrationDone = false;
 
-async function getSession(): Promise<{ nim: string | null; token: string | null }> {
-  // multiGet: satu lintasan bridge untuk dua kunci, bukan dua.
-  const [[, nim], [, token]] = await AsyncStorage.multiGet([
-    "@user_nim",
+async function getSession(): Promise<{
+  id: string | null;
+  token: string | null;
+}> {
+  // Endpoint wajah server memakai id NUMERIK peserta, bukan nim - dipastikan
+  // dari source Flutter resmi (lihat [[lkh-flutter-source-api]] & komentar di
+  // LoginScreen). multiGet: satu lintasan bridge untuk dua kunci.
+  const [[, id], [, token]] = await AsyncStorage.multiGet([
+    "@user_id",
     "@user_token",
   ]);
-  return { nim, token };
+  return { id, token };
 }
 
 /**
@@ -229,10 +234,10 @@ async function getEnrollments(): Promise<Float32Array[] | null> {
 export async function syncEnrollmentFromServer(): Promise<SyncOutcome> {
   const keys = await storageKeys();
   await migrateLegacyV2Once(keys);
-  const { nim, token } = await getSession();
+  const { id, token } = await getSession();
 
   try {
-    const remote = await fetchServerEnrollment(nim, token);
+    const remote = await fetchServerEnrollment(id, token);
     if (remote) {
       const local = await readLocalEnrollment(keys);
       await writeLocalEnrollment(remote, local?.photos ?? [], keys.enrollment);
@@ -243,7 +248,7 @@ export async function syncEnrollmentFromServer(): Promise<SyncOutcome> {
     // salinan lokal, kirim - jangan hapus lokalnya.
     const local = await readLocalEnrollment(keys);
     if (local) {
-      await pushServerEnrollment(nim, token, local.embeddings);
+      await pushServerEnrollment(id, token, local.embeddings);
       await AsyncStorage.removeItem(keys.pendingPush);
       return "pushed";
     }
@@ -271,9 +276,9 @@ export async function saveEnrollment(
   const keys = await storageKeys();
   await writeLocalEnrollment(plain, photoUris, keys.enrollment);
 
-  const { nim, token } = await getSession();
+  const { id, token } = await getSession();
   try {
-    await pushServerEnrollment(nim, token, plain);
+    await pushServerEnrollment(id, token, plain);
     await AsyncStorage.removeItem(keys.pendingPush);
     return "pushed";
   } catch {
@@ -346,9 +351,9 @@ export interface ResetQuota {
  * terjangkau, dan ikut disegarkan tiap kali server berhasil dibaca.
  */
 export async function getResetQuota(): Promise<ResetQuota> {
-  const { nim, token } = await getSession();
+  const { id, token } = await getSession();
   try {
-    const info = await fetchServerResetInfo(nim, token);
+    const info = await fetchServerResetInfo(id, token);
     if (info) {
       await AsyncStorage.setItem(
         (await storageKeys()).resetCount,
@@ -381,13 +386,13 @@ export async function getResetQuota(): Promise<ResetQuota> {
  * false kalau jatahnya sudah habis (data dibiarkan utuh).
  */
 export async function resetEnrollment(): Promise<boolean> {
-  const { nim, token } = await getSession();
+  const { id, token } = await getSession();
 
   try {
-    const info = await fetchServerResetInfo(nim, token);
+    const info = await fetchServerResetInfo(id, token);
     if (info) {
       if (info.used >= info.max) return false;
-      await requestServerReset(nim, token);
+      await requestServerReset(id, token);
       await clearEnrollment();
       await AsyncStorage.setItem(
         (await storageKeys()).resetCount,

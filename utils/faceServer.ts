@@ -5,31 +5,28 @@ import { DEMO_TOKEN } from "./demoMode";
  * Sisi server untuk data wajah - mengikuti aplikasi Android resmi, yang
  * menyimpan wajah terdaftar di SERVER, bukan di HP.
  *
- * ASAL PENGETAHUAN INI (penting saat ada yang tidak cocok):
- * seluruh endpoint dan nama field di bawah direkonstruksi dari APK resmi
- * (`libapp.so`, Flutter AOT), bukan dari dokumentasi API - kita tidak punya
- * akses ke dokumentasinya. Yang benar-benar terlihat sebagai string literal
- * di dalam biner:
+ * ASAL PENGETAHUAN INI - kini DIPASTIKAN dari source Flutter resmi
+ * (gitlab.com/nur.afif/lkh-kkn, lib/api/api_interface.dart), bukan lagi
+ * tebakan dari APK. Yang terbukti di sana:
  *
- *   /api/face-data          /api/simpan-face-data
- *   /api/reset-wajah        /api/jumlah-reset        /api/max-reset
- *   face_data               reset_jumlah   reset_maksimum   reset_peserta_id
+ *   POST /api/simpan-face-data : FormData { "id": peserta.id, "face_data": ... }
+ *   GET  /api/face-data        : query   { "id": peserta.id }
+ *   /api/reset-wajah  /api/jumlah-reset  /api/max-reset  /api/simpan-reset
  *
- * Tabel sqflite lokal app Android, `reset(reset_peserta_id, reset_jumlah,
- * reset_maksimum)`, memperkuat bahwa jatah reset itu OTORITASNYA DI SERVER
- * dan cuma di-cache di perangkat - berbeda dengan port iOS ini yang semula
- * menghitungnya sendiri secara lokal.
+ * KOREKSI PENTING: kuncinya adalah `id` NUMERIK peserta, BUKAN nim/kode -
+ * dulu kode ini keliru mengirim nim. Jatah reset otoritasnya di server (tabel
+ * lokal `reset(reset_peserta_id, ...)` cuma cache).
  *
- * Yang TIDAK terlihat dari biner: bentuk persis payload-nya (kode Dart-nya
- * AOT-compiled, jadi string dump hanya memberi literal, bukan bagaimana
- * literal itu dirangkai). Jadi bentuk kiriman di bawah adalah tebakan
- * paling masuk akal: satu field `face_data` berisi JSON array-of-array
- * float. Kalau server menolak, PESAN ASLINYA ditampilkan ke pengguna dan
- * ikut dilempar lewat ApiError - itulah patokan untuk mengoreksi nama/bentuk
- * field di sini, pola yang sama seperti /api/simpan-lkh di LKHScreen.
+ * SATU DIVERGENSI YANG DISENGAJA: app Flutter menyimpan SATU embedding
+ * (predictedData.toString()); app ini menyimpan BANYAK (median-of-N, lebih
+ * akurat). Karena kedua ujung (iOS & Android) sama-sama app RN kita, JSON
+ * array-of-array kita bulak-balik konsisten lewat parseEmbeddings di bawah.
+ * Kalau server ternyata memvalidasi ketat 192 angka, PESAN ASLINYA muncul ke
+ * pengguna lewat ApiError - itu patokan koreksi berikutnya.
  *
- * Pembacaan sengaja dibuat toleran (lihat parseEmbeddings): server bisa saja
- * mengembalikan array-of-array, satu array datar, atau string JSON.
+ * BELUM DIVERIFIKASI LIVE: format ini benar menurut source, tapi belum
+ * pernah diuji terhadap server dengan akun valid (dulu 422). Server dosen =
+ * lkh-dev.uin-alauddin.ac.id; app ini masih ke lkh-kkn (prod) - lihat api.ts.
  */
 
 const PATH_FETCH = "/api/face-data";
@@ -47,13 +44,16 @@ export interface ServerResetInfo {
 }
 
 /**
- * Mode demo memakai token lokal yang pasti ditolak server (lihat
- * demoMode.ts), jadi permintaannya dilewati sama sekali - bukan dikirim lalu
- * gagal. Tanpa ini setiap aksi wajah dalam mode demo menunggu timeout
- * jaringan tanpa guna.
+ * Endpoint wajah memakai `id` NUMERIK peserta sebagai kunci, BUKAN nim -
+ * dipastikan dari source Flutter resmi: postSimpanFaceData(peserta.id, ...)
+ * dan getFaceData({id}). Lihat [[lkh-flutter-source-api]].
+ *
+ * Mode demo memakai token lokal yang pasti ditolak server (lihat demoMode.ts),
+ * jadi permintaannya dilewati - bukan dikirim lalu gagal. Sesi tanpa id
+ * numerik (mis. profil lama sebelum id ditangkap) juga dilewati.
  */
-function isUsableSession(nim: string | null, token: string | null): boolean {
-  return !!nim && !!token && token !== DEMO_TOKEN;
+function isUsableSession(id: string | null, token: string | null): boolean {
+  return !!id && !!token && token !== DEMO_TOKEN;
 }
 
 /**
@@ -100,7 +100,7 @@ function pickFaceField(payload: unknown): unknown {
 }
 
 /**
- * Ambil set wajah terdaftar milik `nim` dari server.
+ * Ambil set wajah terdaftar milik peserta (`id` numerik) dari server.
  * - array embedding  -> server punya data
  * - null             -> server bisa dihubungi tapi belum ada wajah terdaftar
  * - lempar           -> server tidak bisa dihubungi / sesi habis; PEMANGGIL
@@ -109,25 +109,25 @@ function pickFaceField(payload: unknown): unknown {
  *                       setiap kali internet mati).
  */
 export async function fetchServerEnrollment(
-  nim: string | null,
+  id: string | null,
   token: string | null,
 ): Promise<number[][] | null> {
-  if (!isUsableSession(nim, token)) return null;
-  const payload = await apiGet<unknown>(PATH_FETCH, token!, { nim: nim! });
+  if (!isUsableSession(id, token)) return null;
+  const payload = await apiGet<unknown>(PATH_FETCH, token!, { id: id! });
   return parseEmbeddings(pickFaceField(payload));
 }
 
 /** Kirim set wajah terdaftar ke server (dipakai setelah enrollment selesai). */
 export async function pushServerEnrollment(
-  nim: string | null,
+  id: string | null,
   token: string | null,
   embeddings: number[][],
 ): Promise<void> {
-  if (!isUsableSession(nim, token)) {
+  if (!isUsableSession(id, token)) {
     throw new Error("Sesi tidak tersedia untuk mengirim data wajah.");
   }
   await apiPostForm<unknown>(PATH_SAVE, token!, {
-    nim: nim!,
+    id: id!,
     [FIELD_FACE_DATA]: JSON.stringify(embeddings),
   });
 }
@@ -139,13 +139,13 @@ export async function pushServerEnrollment(
  * kombinasi setengah-server-setengah-lokal yang menyesatkan.
  */
 export async function fetchServerResetInfo(
-  nim: string | null,
+  id: string | null,
   token: string | null,
 ): Promise<ServerResetInfo | null> {
-  if (!isUsableSession(nim, token)) return null;
+  if (!isUsableSession(id, token)) return null;
   const [countRaw, maxRaw] = await Promise.all([
-    apiGet<unknown>(PATH_RESET_COUNT, token!, { nim: nim! }),
-    apiGet<unknown>(PATH_RESET_MAX, token!, { nim: nim! }),
+    apiGet<unknown>(PATH_RESET_COUNT, token!, { id: id! }),
+    apiGet<unknown>(PATH_RESET_MAX, token!, { id: id! }),
   ]);
 
   const num = (payload: unknown, ...keys: string[]): number | null => {
@@ -171,11 +171,11 @@ export async function fetchServerResetInfo(
 
 /** Minta server menghapus wajah terdaftar dan menambah hitungan reset. */
 export async function requestServerReset(
-  nim: string | null,
+  id: string | null,
   token: string | null,
 ): Promise<void> {
-  if (!isUsableSession(nim, token)) {
+  if (!isUsableSession(id, token)) {
     throw new Error("Sesi tidak tersedia untuk reset wajah.");
   }
-  await apiPostForm<unknown>(PATH_RESET, token!, { nim: nim! });
+  await apiPostForm<unknown>(PATH_RESET, token!, { id: id! });
 }

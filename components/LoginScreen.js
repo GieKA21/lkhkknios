@@ -109,6 +109,12 @@ export default function LoginScreen({ onLoginSuccess }) {
 
             // Mapping JSON yang presisi untuk menghindari [object Object] dan data kosong
             const combinedProfile = {
+              // ID NUMERIK peserta - beda dari `nim`/`kode`. Endpoint wajah
+              // server (/api/simpan-face-data, /api/face-data) memakai `id`
+              // ini sebagai kunci, BUKAN nim (dipastikan dari source Flutter
+              // resmi: postSimpanFaceData(peserta.id, ...)). Disimpan supaya
+              // sinkronisasi wajah lintas-perangkat memakai kunci yang benar.
+              id: data.id ?? null,
               nim: data.kode || nim,
               nama: data.nama || "Peserta KKN",
               foto: data.foto || data.mhsFoto || "274131.jpg",
@@ -141,6 +147,10 @@ export default function LoginScreen({ onLoginSuccess }) {
               "@user_profile",
               JSON.stringify(combinedProfile),
             );
+            // Kunci id numerik untuk endpoint wajah (lihat komentar di atas).
+            if (data.id != null) {
+              await AsyncStorage.setItem("@user_id", String(data.id));
+            }
           } else {
             throw new Error("Format respons API peserta tidak sesuai");
           }
