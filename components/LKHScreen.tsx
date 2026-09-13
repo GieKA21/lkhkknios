@@ -165,9 +165,19 @@ export default function LKHScreen() {
   // FHD_16_9 dipakai karena rasio 9:16-nya jauh lebih dekat ke bentuk preview,
   // dan resolusinya (1080x1920) sudah jauh lebih dari cukup untuk model
   // MobileFaceNet yang inputnya cuma 112x112.
-  const photoOutput = usePhotoOutput({
-    targetResolution: CommonResolutions.FHD_16_9,
-  });
+  // BUGFIX (kedip/gelap/force-close): objek config & array outputs HARUS
+  // referensinya stabil. Tanpa useMemo, tiap render (dan liveness membuat
+  // render sering, mengikuti gerak kepala) menghasilkan `{...}` / `[...]`
+  // baru -> VisionCamera mengira config/output berubah -> mengonfigurasi
+  // ulang kamera terus-menerus -> preview berkedip ke hitam, auto-exposure
+  // tak sempat stabil (gambar gelap), dan sesekali SIGSEGV. Memoization
+  // membuat kamera dikonfigurasi sekali dan dibiarkan.
+  const photoConfig = useMemo(
+    () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
+    [],
+  );
+  const photoOutput = usePhotoOutput(photoConfig);
+  const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
   const faceQualityGate = useFaceQualityGate();
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
@@ -980,7 +990,7 @@ export default function LKHScreen() {
               style={styles.camera}
               device={cameraDevice}
               isActive={isCameraVisible}
-              outputs={[photoOutput]}
+              outputs={cameraOutputs}
               onFacesDetected={handleCameraFaces}
               onError={faceQualityGate.onFaceDetectionError}
               performanceMode="fast"

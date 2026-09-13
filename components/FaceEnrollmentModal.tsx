@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -70,12 +70,15 @@ export default function FaceEnrollmentModal({
   const cameraDevice = useCameraDevice("front");
   const qualityGate = useFaceQualityGate();
   const insets = useSafeAreaInsets();
-  // Resolusi sama dengan kamera absensi (LKHScreen) - alasan yang sama:
-  // rasio 9:16 mendekati bentuk preview, dan jauh melampaui input
-  // MobileFaceNet yang cuma 112x112.
-  const photoOutput = usePhotoOutput({
-    targetResolution: CommonResolutions.FHD_16_9,
-  });
+  // Resolusi sama dengan kamera absensi (LKHScreen). config & outputs
+  // di-memo agar referensinya stabil - lihat komentar panjang di LKHScreen:
+  // tanpa ini kamera dikonfigurasi ulang tiap render (kedip/gelap/crash).
+  const photoConfig = useMemo(
+    () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
+    [],
+  );
+  const photoOutput = usePhotoOutput(photoConfig);
+  const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
 
   const [captures, setCaptures] = useState<CaptureSlot[]>([]);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
@@ -184,7 +187,7 @@ export default function FaceEnrollmentModal({
             style={styles.camera}
             device={cameraDevice}
             isActive={visible}
-            outputs={[photoOutput]}
+            outputs={cameraOutputs}
             onFacesDetected={qualityGate.onFacesDetected}
             onError={qualityGate.onFaceDetectionError}
             performanceMode="fast"
