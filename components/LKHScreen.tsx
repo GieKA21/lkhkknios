@@ -104,6 +104,14 @@ function generateLocalRecordCode(): string {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Jeda minimum antar-pemrosesan frame wajah di thread JS (~9x/detik).
+ * Lihat komentar di handleCameraFaces: kamera mengirim frame jauh lebih
+ * cepat dari yang dibutuhkan panduan di layar, dan setiap frame yang
+ * diproses berarti setState + render ulang.
+ */
+const FACE_TICK_MS = 110;
+
 export default function LKHScreen() {
   const [userData, setUserData] = useState<UserData>({
     nama: "Memuat...",
@@ -165,19 +173,26 @@ export default function LKHScreen() {
   // FHD_16_9 dipakai karena rasio 9:16-nya jauh lebih dekat ke bentuk preview,
   // dan resolusinya (1080x1920) sudah jauh lebih dari cukup untuk model
   // MobileFaceNet yang inputnya cuma 112x112.
-  // BUGFIX (kedip/gelap/force-close): objek config & array outputs HARUS
-  // referensinya stabil. Tanpa useMemo, tiap render (dan liveness membuat
-  // render sering, mengikuti gerak kepala) menghasilkan `{...}` / `[...]`
-  // baru -> VisionCamera mengira config/output berubah -> mengonfigurasi
-  // ulang kamera terus-menerus -> preview berkedip ke hitam, auto-exposure
-  // tak sempat stabil (gambar gelap), dan sesekali SIGSEGV. Memoization
-  // membuat kamera dikonfigurasi sekali dan dibiarkan.
+  // Referensi stabil untuk config & outputs. VisionCamera sendiri sudah
+  // menyaring array outputs lewat useMemoizedArray (dicek di source-nya),
+  // jadi ini BUKAN penyebab kedip - tapi dokumentasinya tetap meminta
+  // outputs dimemo, dan menstabilkannya gratis. Penyebab kedip/gelap yang
+  // sebenarnya ditangani lewat CAMERA_CONSTRAINTS + throttle di bawah.
   const photoConfig = useMemo(
     () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
     [],
   );
   const photoOutput = usePhotoOutput(photoConfig);
   const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
+  // PREVIEW GELAP: detektor wajah menambah stream frame, dan selama ada
+  // stream berjalan iOS membatasi lama pencahayaan (exposure) maksimum ke
+  // satu durasi frame - pada 30fps itu 1/30 detik. Aplikasi Kamera bawaan
+  // tidak terikat itu (mode foto/Night bisa memapar jauh lebih lama),
+  // makanya di ruangan yang sama preview kita jauh lebih gelap. Menurunkan
+  // ke 15fps menggandakan batas exposure (2x lebih terang) dan sekaligus
+  // memangkas separuh frekuensi callback onFacesDetected ke thread JS.
+  // Tantangan gerak kepala sama sekali tidak butuh 30fps.
+  const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
   const faceQualityGate = useFaceQualityGate();
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
@@ -186,8 +201,21 @@ export default function LKHScreen() {
   // Satu callback ke kamera yang menyuapi frame ke quality gate DAN ke
   // liveness sekaligus. Keduanya membaca yaw/bounds yang sama; tidak ada
   // mode detektor baru yang dinyalakan (aman dari crash SIGSEGV).
+  // KEDIP/CRASH: onFacesDetected dipanggil di thread JS untuk SETIAP frame,
+  // dan kedua hook di bawah memanggil setState. Saat kepala ditoleh, pesan
+  // panduan berganti-ganti sehingga komponen sebesar ini benar-benar
+  // dirender ulang puluhan kali per detik - thread JS tersedak (UI tersendat)
+  // dan tekanan itu memperbesar peluang SIGSEGV yang memang diakui library
+  // MLKit-iOS di iOS 26. Dibatasi ~9x per detik: masih jauh lebih cepat dari
+  // gerakan kepala manusia (~1 detik per tolehan), tapi beban JS-nya turun
+  // drastis. Frame yang dilewati tidak hilang maknanya - yaw berubah mulus,
+  // jadi ambang tolehan tetap tertangkap.
+  const lastFaceTickRef = useRef(0);
   const handleCameraFaces = useCallback(
     (faces: Face[]) => {
+      const now = Date.now();
+      if (now - lastFaceTickRef.current < FACE_TICK_MS) return;
+      lastFaceTickRef.current = now;
       faceQualityGate.onFacesDetected(faces);
       liveness.onFacesDetected(faces);
     },
@@ -991,6 +1019,11 @@ export default function LKHScreen() {
               device={cameraDevice}
               isActive={isCameraVisible}
               outputs={cameraOutputs}
+              constraints={cameraConstraints}
+              // Low-light boost bawaan iOS (AVCaptureDevice): menaikkan
+              // sensitivitas otomatis saat gelap, dan tidak berefek saat
+              // cahaya sudah cukup - aman dipasang permanen.
+              enableLowLightBoost
               onFacesDetected={handleCameraFaces}
               onError={faceQualityGate.onFaceDetectionError}
               performanceMode="fast"

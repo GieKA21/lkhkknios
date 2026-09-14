@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -61,6 +61,9 @@ const CAPTURE_PROMPTS = [
   "Terakhir - posisi/cahaya sedikit berbeda",
 ];
 
+/** Jeda minimum antar-pemrosesan frame wajah (~9x/detik). */
+const FACE_TICK_MS = 110;
+
 export default function FaceEnrollmentModal({
   visible,
   onClose,
@@ -79,6 +82,24 @@ export default function FaceEnrollmentModal({
   );
   const photoOutput = usePhotoOutput(photoConfig);
   const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
+  // 15fps + low-light boost: alasan lengkap ada di LKHScreen - selama ada
+  // stream frame, iOS membatasi exposure ke satu durasi frame, jadi 30fps
+  // membuat preview gelap di ruangan yang cahayanya sebenarnya cukup.
+  const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
+  // Batasi pemrosesan wajah di thread JS (~9x/detik) supaya panduan di layar
+  // tidak memicu render ulang puluhan kali per detik.
+  const lastFaceTickRef = useRef(0);
+  const handleFaces = useCallback(
+    (faces: Parameters<typeof qualityGate.onFacesDetected>[0]) => {
+      const now = Date.now();
+      if (now - lastFaceTickRef.current < FACE_TICK_MS) return;
+      lastFaceTickRef.current = now;
+      qualityGate.onFacesDetected(faces);
+    },
+    // onFacesDetected sudah stabil (useCallback([]) di dalam hook-nya).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [qualityGate.onFacesDetected],
+  );
 
   const [captures, setCaptures] = useState<CaptureSlot[]>([]);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
@@ -188,7 +209,9 @@ export default function FaceEnrollmentModal({
             device={cameraDevice}
             isActive={visible}
             outputs={cameraOutputs}
-            onFacesDetected={qualityGate.onFacesDetected}
+            constraints={cameraConstraints}
+            enableLowLightBoost
+            onFacesDetected={handleFaces}
             onError={qualityGate.onFaceDetectionError}
             performanceMode="fast"
             runLandmarks={false}
