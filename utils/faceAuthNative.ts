@@ -687,7 +687,13 @@ export function faceSimilarity(a: Float32Array | number[], b: Float32Array | num
 // alignment kanonik (ARC_* di atas) + agregasi median (similarityToEnrollment
 // di faceEnrollment.ts). Mengubah salah satunya menggeser seluruh skala skor,
 // jadi ambang ini harus diukur ulang bersamaan.
-export const FACE_MATCH_THRESHOLD = 0.47;
+//
+// KALIBRASI ULANG 2026-09-19 (9 orang, 63 foto): ambang lama 0.47 TERLALU
+// RENDAH - seorang impostor nyata mencetak median 0.479 dan lolos. Sapuan
+// menunjukkan untuk strategi MEDIAN: EER 0,00% pada ambang 0.673 (d' 4.225).
+// Skor genuine di lapangan 0.80-0.91, impostor ~0.48, jadi 0.673 menolak
+// impostor dengan aman tanpa menolak pemilik. Naik dari 0.47 -> 0.673.
+export const FACE_MATCH_THRESHOLD = 0.673;
 
 /**
  * Enrollment cross-check ONLY (enforced per-capture in
