@@ -31,6 +31,10 @@ import {
     syncEnrollmentFromServer,
 } from "../utils/faceEnrollment";
 import { decideAttendance } from "../utils/verificationAgent";
+import {
+  ensurePresensiProgramId,
+  PRESENSI_DESKRIPSI,
+} from "../utils/presensiProgram";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
@@ -677,6 +681,7 @@ export default function LKHScreen() {
 
   const syncOneRecord = async (
     penggunaId: string,
+    programId: string,
     authToken: string,
     record: LKHRecord,
   ): Promise<{ ok: boolean; message?: string }> => {
@@ -696,12 +701,11 @@ export default function LKHScreen() {
     formData.append("kode", record.kode || generateLocalRecordCode());
     formData.append("waktu", record.date);
     formData.append("koordinat", record.koordinat || "");
-    // program_id & deskripsi WAJIB menurut server. Aplikasi ini (presensi)
-    // belum mengumpulkan keduanya - untuk sementara dikirim dari record bila
-    // ada, atau kosong. Selama program_id kosong, server kemungkinan tetap
-    // menolak; pengumpulan program+deskripsi adalah fitur yang belum ada.
-    formData.append("program_id", record.programId ? String(record.programId) : "");
-    formData.append("deskripsi", record.deskripsi || "");
+    // program_id & deskripsi WAJIB server. Aplikasi ini fokus presensi, jadi
+    // keduanya diisi otomatis: program default (lihat utils/presensiProgram.ts)
+    // dan deskripsi tetap. Pengguna tidak memilih/mengisi apa pun.
+    formData.append("program_id", programId);
+    formData.append("deskripsi", record.deskripsi || PRESENSI_DESKRIPSI);
     formData.append("device_info", getDeviceInfoStr());
     formData.append("version", APP_VERSION);
     // React Native's FormData accepts this {uri,name,type} file shape (not
@@ -749,6 +753,22 @@ export default function LKHScreen() {
         return;
       }
 
+      // Presensi disimpan sebagai LKH ke sebuah program default (server tak
+      // punya endpoint absen terpisah). Siapkan program_id sekali sebelum
+      // loop - dibuat otomatis bila peserta belum punya program.
+      let programId: string;
+      try {
+        programId = await ensurePresensiProgramId(currentToken);
+      } catch (e) {
+        Alert.alert(
+          "Sinkronisasi Gagal",
+          `Tidak dapat menyiapkan program presensi di server.\n\n${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+        return;
+      }
+
       const updatedRecords = { ...records };
       let countSync = 0;
       let countFailed = 0;
@@ -766,7 +786,12 @@ export default function LKHScreen() {
         }
 
         try {
-          const result = await syncOneRecord(penggunaId, currentToken, record);
+          const result = await syncOneRecord(
+            penggunaId,
+            programId,
+            currentToken,
+            record,
+          );
           if (result.ok) {
             updatedRecords[key] = { ...record, status: "synced" };
             countSync++;

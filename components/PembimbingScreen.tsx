@@ -129,6 +129,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
             "@user_profile",
             "@user_role",
             "@demo_mode",
+            "@presensi_program_id",
           ]);
           onLogout();
         },

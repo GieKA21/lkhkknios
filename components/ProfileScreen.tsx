@@ -305,6 +305,8 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                   await AsyncStorage.removeItem("@user_id");
                   await AsyncStorage.removeItem("@user_role");
                   await AsyncStorage.removeItem("@user_profile");
+                  // Cache program presensi terikat akun - buang saat logout.
+                  await AsyncStorage.removeItem("@presensi_program_id");
                   // Sesi demo (Masuk Mode Demo di LoginScreen) menyalakan
                   // @demo_mode - matikan ikut di sini supaya sesi demo benar-
                   // benar berakhir saat logout dan login asli berikutnya tidak
