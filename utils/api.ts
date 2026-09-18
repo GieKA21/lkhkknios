@@ -143,10 +143,8 @@ export async function apiGet<T>(
 }
 
 /**
- * POST multipart. Bentuk ini dipakai (bukan JSON) karena itu yang terbukti
- * diterima endpoint lain di server yang sama - lihat catatan di
- * scripts/login-probe2.ps1: hipotesis JSON sudah diuji dan tidak membuat
- * server berperilaku beda.
+ * POST multipart. Bentuk ini dipakai (bukan JSON) karena itulah bentuk yang
+ * diterima endpoint-endpoint di server ini.
  */
 /* ------------------------------------------------------------------ *
  * Foto profil peserta

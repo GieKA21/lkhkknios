@@ -338,9 +338,8 @@ export default function LoginScreen({ onLoginSuccess }) {
   };
 
   // Login lokal tanpa server: akun KKN terikat periode angkatan, jadi setelah
-  // masa KKN selesai server menolak login selamanya (401 "invalid credentials"
-  // di semua varian request - lihat scripts/login-probe*.ps1). Sesi demo
-  // memakai token dummy + mode demo aktif, sehingga catatan absen ter-tag
+  // masa KKN selesai server menolak login (401 "invalid credentials"). Sesi
+  // demo memakai token dummy + mode demo aktif, sehingga catatan absen ter-tag
   // isDemo dan tidak pernah dikirim ke server asli.
   const handleDemoLogin = () => {
     Alert.alert(

@@ -16,11 +16,10 @@ import * as Device from "expo-device";
 export const APP_VERSION = "1.1.1";
 
 /**
- * User-Agent mirroring the official client. The server's WAF only lets a Dart
- * User-Agent through (verified via scripts/login-probe3.ps1 variant 3/4:
- * identical POST reached the backend with this UA but got an HTML block page
- * without it). Every request - fetch() AND <Image> sources alike - must send
- * this header or it never reaches the app.
+ * User-Agent yang sesuai dengan klien resmi. WAF di depan server hanya
+ * meneruskan request dengan User-Agent Dart; tanpa header ini request tidak
+ * sampai ke backend (mengembalikan halaman HTML). Setiap request - fetch()
+ * maupun sumber <Image> - harus mengirim header ini.
  */
 export const API_USER_AGENT = "Dart/3.8 (dart:io)";
 
