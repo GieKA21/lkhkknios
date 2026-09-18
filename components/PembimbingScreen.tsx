@@ -21,6 +21,7 @@ import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
 import { DEMO_TOKEN } from "../utils/demoMode";
 import {
   fetchPembimbingDates,
+  fetchStudentLkh,
   fetchSupervisedLkh,
   fetchSupervisedStudents,
 } from "../utils/pembimbingApi";
@@ -154,6 +155,13 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const [search, setSearch] = useState("");
   const [onlyAbsent, setOnlyAbsent] = useState(false);
 
+  // Riwayat kehadiran per mahasiswa
+  const [riwayatOf, setRiwayatOf] = useState<Student | null>(null);
+  const [riwayatLoading, setRiwayatLoading] = useState(false);
+  const [riwayat, setRiwayat] = useState<{ date: string; filled: boolean }[]>(
+    [],
+  );
+
   const tokenRef = useRef<string | null>(null);
   const nipRef = useRef<string>("");
 
@@ -239,6 +247,50 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
       }
     },
     [isDemo],
+  );
+
+  // Riwayat kehadiran: bandingkan tanggal LKH mahasiswa (getLkh) dengan
+  // seluruh hari periode KKN (kunci dayFill dari /api/pembimbing-tanggal),
+  // sampai hari ini. Menghasilkan daftar per-hari isi/tidak-isi.
+  const openRiwayat = useCallback(
+    async (student: Student) => {
+      setRiwayatOf(student);
+      setRiwayat([]);
+      const today = new Date().toISOString().slice(0, 10);
+      const periodDays = Object.keys(dayFill)
+        .filter((d) => d <= today)
+        .sort();
+
+      if (isDemo) {
+        setRiwayat(
+          periodDays.map((d, i) => ({ date: d, filled: i % 3 !== 0 })),
+        );
+        return;
+      }
+      const token = tokenRef.current;
+      if (!token) return;
+      setRiwayatLoading(true);
+      try {
+        const raw = await fetchStudentLkh(String(student.kode), token);
+        const filledSet = new Set<string>();
+        if (Array.isArray(raw)) {
+          for (const rec of raw) {
+            const w = get(rec, "waktu");
+            if (w != null) filledSet.add(String(w).slice(0, 10));
+          }
+        }
+        // Kalau periode dari kalender kosong, pakai rentang tanggal LKH-nya.
+        const days =
+          periodDays.length > 0 ? periodDays : Array.from(filledSet).sort();
+        setRiwayat(days.map((d) => ({ date: d, filled: filledSet.has(d) })));
+      } catch (e) {
+        console.error("Gagal memuat riwayat kehadiran", e);
+        setRiwayat([]);
+      } finally {
+        setRiwayatLoading(false);
+      }
+    },
+    [dayFill, isDemo],
   );
 
   const confirmLogout = () => {
@@ -498,25 +550,34 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
                       {!!s.kecamatan && (
                         <Text style={styles.cardMeta}>{s.kecamatan}</Text>
                       )}
-                      <View
-                        style={[
-                          styles.badge,
-                          isHadir ? styles.badgeHadir : styles.badgeAbsent,
-                        ]}
-                      >
-                        <Ionicons
-                          name={isHadir ? "checkmark-circle" : "close-circle"}
-                          size={14}
-                          color={isHadir ? "#1B7F4D" : "#C0392B"}
-                        />
-                        <Text
+                      <View style={styles.cardActions}>
+                        <View
                           style={[
-                            styles.badgeText,
-                            { color: isHadir ? "#1B7F4D" : "#C0392B" },
+                            styles.badge,
+                            isHadir ? styles.badgeHadir : styles.badgeAbsent,
                           ]}
                         >
-                          {isHadir ? "Hadir" : "Tidak mengisi"}
-                        </Text>
+                          <Ionicons
+                            name={isHadir ? "checkmark-circle" : "close-circle"}
+                            size={14}
+                            color={isHadir ? "#1B7F4D" : "#C0392B"}
+                          />
+                          <Text
+                            style={[
+                              styles.badgeText,
+                              { color: isHadir ? "#1B7F4D" : "#C0392B" },
+                            ]}
+                          >
+                            {isHadir ? "Hadir" : "Tidak mengisi"}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.riwayatBtn}
+                          onPress={() => openRiwayat(s)}
+                        >
+                          <Ionicons name="time-outline" size={14} color={ACCENT} />
+                          <Text style={styles.riwayatBtnText}>Riwayat</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
                   </View>
@@ -528,6 +589,87 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
             <TouchableOpacity
               style={styles.closeBtn}
               onPress={() => setModalDate(null)}
+            >
+              <Text style={styles.closeText}>Tutup</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal riwayat kehadiran per mahasiswa */}
+      <Modal
+        visible={!!riwayatOf}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setRiwayatOf(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Riwayat Kehadiran</Text>
+            {riwayatOf && (
+              <>
+                <Text style={styles.riwayatName}>{riwayatOf.nama}</Text>
+                <Text style={styles.riwayatNim}>NIM: {riwayatOf.kode}</Text>
+                {riwayat.length > 0 && (
+                  <Text style={styles.riwayatPeriode}>
+                    Periode: {prettyDate(riwayat[0].date)} s.d.{" "}
+                    {prettyDate(riwayat[riwayat.length - 1].date)}
+                  </Text>
+                )}
+                <View style={styles.riwayatSummary}>
+                  <Text style={styles.riwayatSumText}>
+                    Total hari: {riwayat.length}
+                  </Text>
+                  <Text style={[styles.riwayatSumText, { color: "#1B7F4D" }]}>
+                    Isi: {riwayat.filter((r) => r.filled).length}
+                  </Text>
+                  <Text style={[styles.riwayatSumText, { color: "#C0392B" }]}>
+                    Tidak isi: {riwayat.filter((r) => !r.filled).length}
+                  </Text>
+                </View>
+
+                {riwayatLoading ? (
+                  <View style={styles.centerBox}>
+                    <ActivityIndicator size="large" color={ACCENT} />
+                  </View>
+                ) : (
+                  <ScrollView style={{ marginTop: 4 }}>
+                    {riwayat.length === 0 && (
+                      <Text style={styles.centerText}>
+                        Belum ada data periode. Pastikan kalender sudah termuat.
+                      </Text>
+                    )}
+                    {riwayat.map((r) => (
+                      <View
+                        key={r.date}
+                        style={[
+                          styles.riwayatRow,
+                          r.filled ? styles.cardHadir : styles.cardAbsent,
+                        ]}
+                      >
+                        <Ionicons
+                          name={r.filled ? "checkmark-circle" : "close-circle"}
+                          size={20}
+                          color={r.filled ? "#1B7F4D" : "#C0392B"}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.riwayatDate}>
+                            {prettyDate(r.date)}
+                          </Text>
+                          <Text style={styles.cardMeta}>
+                            {r.filled ? "Mengisi LKH" : "Tidak mengisi LKH"}
+                          </Text>
+                        </View>
+                      </View>
+                    ))}
+                    <View style={{ height: 8 }} />
+                  </ScrollView>
+                )}
+              </>
+            )}
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => setRiwayatOf(null)}
             >
               <Text style={styles.closeText}>Tutup</Text>
             </TouchableOpacity>
@@ -776,6 +918,65 @@ const styles = StyleSheet.create({
   badgeHadir: { backgroundColor: "rgba(27,127,77,0.12)" },
   badgeAbsent: { backgroundColor: "rgba(192,57,43,0.12)" },
   badgeText: { fontSize: 12.5, fontWeight: "700" },
+  cardActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 8,
+    flexWrap: "wrap",
+  },
+  riwayatBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(14,120,61,0.35)",
+  },
+  riwayatBtnText: { fontSize: 12.5, fontWeight: "700", color: ACCENT },
+  riwayatName: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: TEXT_PRIMARY,
+    textAlign: "center",
+  },
+  riwayatNim: {
+    fontSize: 13,
+    color: TEXT_SECONDARY,
+    textAlign: "center",
+    marginTop: 2,
+  },
+  riwayatPeriode: {
+    fontSize: 12.5,
+    color: ACCENT,
+    textAlign: "center",
+    marginTop: 4,
+  },
+  riwayatSummary: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    paddingVertical: 12,
+    marginTop: 12,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: "#E4E9EF",
+  },
+  riwayatSumText: { fontSize: 13, fontWeight: "700", color: TEXT_PRIMARY },
+  riwayatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 8,
+    borderWidth: 1.5,
+  },
+  riwayatDate: { fontSize: 14.5, fontWeight: "700", color: TEXT_PRIMARY },
   closeBtn: {
     backgroundColor: "#C0392B",
     borderRadius: 24,

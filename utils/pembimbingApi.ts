@@ -88,6 +88,19 @@ export function fetchPembimbingDates(
   });
 }
 
+/**
+ * Riwayat LKH satu mahasiswa (semua tanggal ia mengisi), dari /api/lkh?nim=.
+ * Endpoint yang sama dipakai peserta untuk kalendernya sendiri; di sisi dosen
+ * dipakai untuk menyusun riwayat kehadiran per mahasiswa bimbingan. Tiap
+ * record memuat field `waktu` (tanggal LKH).
+ */
+export function fetchStudentLkh(
+  nim: string,
+  token: string,
+): Promise<unknown[]> {
+  return apiGet<unknown[]>("/api/lkh", token, { nim });
+}
+
 /** Tandai satu LKH sudah diperiksa pembimbing. */
 export function checkLkh(lkhId: string | number, token: string): Promise<unknown> {
   return apiPostForm<unknown>(PATH.lkhCheck, token, { lkh_id: String(lkhId) });
