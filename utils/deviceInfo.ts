@@ -1,3 +1,5 @@
+import * as Device from "expo-device";
+
 /**
  * Version string sent to every LKH API call (`version=...`). Centralized so
  * a server-side minimum-version gate can be answered from ONE place - the
@@ -14,39 +16,53 @@
 export const APP_VERSION = "1.1.1";
 
 /**
- * User-Agent that mirrors the official Flutter/Dart app. Cloudflare's WAF in
- * front of the LKH server (lihat API_BASE di utils/api.ts) blocks requests whose User-Agent is not
- * a Dart one (verified via scripts/login-probe3.ps1 variant 3/4: identical
- * POST reached the backend with this UA but got an HTML block page without
- * it). Every request to that server - fetch() AND <Image> sources alike -
- * must send this header or it never reaches the app.
+ * User-Agent mirroring the official client. The server's WAF only lets a Dart
+ * User-Agent through (verified via scripts/login-probe3.ps1 variant 3/4:
+ * identical POST reached the backend with this UA but got an HTML block page
+ * without it). Every request - fetch() AND <Image> sources alike - must send
+ * this header or it never reaches the app.
  */
 export const API_USER_AGENT = "Dart/3.8 (dart:io)";
 
 /**
- * Fixed device fingerprint required by the LKH KKN server's security check
- * (it rejects requests whose `device_info` doesn't look like a real device).
- * Shared by LoginScreen, LKHScreen and ProfileScreen, which all talk to the
- * same API.
+ * `device_info` payload the server records for each request. The server's
+ * request format uses the field names of Android's Build class, so the shape
+ * below keeps those keys; the VALUES are read from the ACTUAL device via
+ * expo-device, so each phone reports its own real model (e.g. an iPhone XR
+ * reports "iPhone XR"), instead of one shared fixed value.
+ *
+ * A couple of keys have no direct iOS equivalent and are filled with the
+ * closest sensible value: `version.sdkInt` takes the numeric iOS major
+ * version, `hardware` is left generic. If the server turns out to require
+ * specific values, the previous fixed fingerprint is recoverable from git
+ * history.
  */
-const DEVICE_INFO = {
-  "version.sdkInt": 28,
-  "version.release": "9",
-  "version.codename": "REL",
-  "version.baseOS": "",
-  brand: "vivo",
-  device: "marlin",
-  display: "PQ3A.190605.07081642 release-keys",
-  hardware: "qcom",
-  id: "PQ3A.190605.07081642",
-  manufacturer: "vivo",
-  model: "V2241A",
-  product: "V2241A",
-  type: "user",
-  isPhysicalDevice: true,
-  serialNumber: "unknown",
-  isLowRamDevice: false,
-};
+function buildDeviceInfo() {
+  const os = Device.osVersion ?? ""; // e.g. "18.0"
+  const majorNum = parseInt(os, 10);
+  return {
+    "version.sdkInt": Number.isFinite(majorNum) ? majorNum : 0,
+    "version.release": os,
+    "version.codename": "REL",
+    "version.baseOS": "",
+    brand: Device.brand ?? "Apple",
+    device: Device.modelId ?? Device.modelName ?? "",
+    display: Device.osBuildId ?? "",
+    hardware: "apple",
+    id: Device.osBuildId ?? "",
+    manufacturer: Device.manufacturer ?? "Apple",
+    model: Device.modelName ?? "",
+    product: Device.modelId ?? Device.modelName ?? "",
+    type: "user",
+    isPhysicalDevice: Device.isDevice,
+    serialNumber: "unknown",
+    isLowRamDevice: false,
+  };
+}
+
+// Dibangun sekali saat modul dimuat - nilai expo-device bersifat konstan
+// per perangkat, jadi tidak perlu dihitung ulang tiap panggilan.
+const DEVICE_INFO = buildDeviceInfo();
 
 export function getDeviceInfoObject() {
   return DEVICE_INFO;
