@@ -880,10 +880,15 @@ export default function LKHScreen() {
   const captureDisabled = isProcessingFace || !liveness.passed;
 
   // Sudah absen hari ini? (ada catatan berfoto untuk tanggal ini). Kalau ya,
-  // tombol "Ambil Foto Absensi" dinonaktifkan & jadi abu-abu - satu hari satu
-  // absen. Mode demo dikecualikan supaya tetap bisa diuji berulang.
+  // tombol dinonaktifkan & jadi abu-abu - satu hari satu absen.
+  // WAJIB syarat hasEnrollment: setelah RESET WAJAH, wajah terdaftar hilang
+  // walau catatan absen hari ini masih ada. Tanpa syarat ini tombol tetap
+  // "Sudah Absen Hari Ini" dan terkunci, sehingga pengguna tak bisa mendaftar
+  // ulang wajahnya. Mode demo dikecualikan supaya bisa diuji berulang.
   const alreadyAttendedToday =
-    !demoModeActive && !!records[toDateKey(new Date())]?.photoUri;
+    !demoModeActive &&
+    hasEnrollment &&
+    !!records[toDateKey(new Date())]?.photoUri;
 
   return (
     <SafeAreaView style={styles.container}>
