@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { faceSimilarity } from "./faceAuthNative";
 import { DEMO_TOKEN } from "./demoMode";
 import {
+  describeServerReset,
   fetchServerEnrollment,
   fetchServerResetInfo,
   pushServerEnrollment,
@@ -437,9 +438,10 @@ export async function resetEnrollment(): Promise<boolean> {
  * karena justru perbandingannya yang menjawab pertanyaan itu.
  */
 export async function describeFaceStorage(): Promise<string> {
-  const [token, nim, demoFlag] = await Promise.all([
+  const [token, nim, id, demoFlag] = await Promise.all([
     AsyncStorage.getItem("@user_token"),
     AsyncStorage.getItem("@user_nim"),
+    AsyncStorage.getItem("@user_id"),
     AsyncStorage.getItem("@demo_mode"),
   ]);
   const keys = await storageKeys();
@@ -447,9 +449,13 @@ export async function describeFaceStorage(): Promise<string> {
   const lines = [
     `Sesi     : ${keys.isDemoSession ? "DEMO" : "AKUN ASLI"}`,
     `NIM      : ${nim ?? "-"}`,
+    `user_id  : ${id ?? "(KOSONG - login ulang!)"}`,
     `Token    : ${token ? token.slice(0, 12) + "..." : "(tidak ada)"}`,
     `Mode demo: ${demoFlag === "1" ? "aktif" : "mati"}`,
     `Key aktif: ${keys.enrollment}`,
+    "",
+    "[RESET DARI SERVER]",
+    await describeServerReset(id, token),
   ];
 
   for (const [label, suffix] of [

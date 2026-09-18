@@ -183,6 +183,41 @@ export async function fetchServerResetInfo(
   return { used, max };
 }
 
+/**
+ * DIAGNOSTIK: tampilkan respons MENTAH endpoint jatah reset, apa adanya, untuk
+ * menelusuri kenapa jatah reset tidak berubah walau sudah diedit di database.
+ * Menunjukkan id yang dipakai, respons jumlah-reset & max-reset (atau pesan
+ * error server), sehingga terlihat apakah masalahnya di server, di nama field,
+ * atau di cache lokal.
+ */
+export async function describeServerReset(
+  id: string | null,
+  token: string | null,
+): Promise<string> {
+  if (!id) return "reset server: @user_id KOSONG (login ulang untuk mengisinya)";
+  if (!token) return "reset server: token kosong";
+
+  const probe = async (
+    label: string,
+    path: string,
+    params?: Record<string, string>,
+  ): Promise<string> => {
+    try {
+      const raw = await apiGet<unknown>(path, token, params);
+      return `${label}: ${JSON.stringify(raw)}`;
+    } catch (e) {
+      return `${label}: ERROR ${e instanceof Error ? e.message : String(e)}`;
+    }
+  };
+
+  const lines = [
+    `pengguna_id dipakai: ${id}`,
+    await probe("jumlah-reset", PATH_RESET_COUNT, { pengguna_id: id }),
+    await probe("max-reset", PATH_RESET_MAX),
+  ];
+  return lines.join("\n");
+}
+
 /** Minta server menghapus wajah terdaftar dan menambah hitungan reset. */
 export async function requestServerReset(
   id: string | null,
