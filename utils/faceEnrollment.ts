@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { faceSimilarity } from "./faceAuthNative";
 import { DEMO_TOKEN } from "./demoMode";
+import { describeServerProgram } from "./presensiProgram";
 import {
   describeServerReset,
   fetchServerEnrollment,
@@ -456,6 +457,9 @@ export async function describeFaceStorage(): Promise<string> {
     "",
     "[RESET DARI SERVER]",
     await describeServerReset(id, token),
+    "",
+    "[PROGRAM PRESENSI]",
+    await describeServerProgram(token),
   ];
 
   for (const [label, suffix] of [
