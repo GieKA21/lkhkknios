@@ -293,6 +293,45 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     [dayFill, isDemo],
   );
 
+  // DIAGNOSTIK sementara: kenapa kalender kosong? Tampilkan @user_id dan
+  // respons MENTAH pembimbing-tanggal + peserta-bimbing.
+  const showDebug = async () => {
+    try {
+      const [token, id, savedNip] = await Promise.all([
+        AsyncStorage.getItem("@user_token"),
+        AsyncStorage.getItem("@user_id"),
+        AsyncStorage.getItem("@user_nim"),
+      ]);
+      const cut = (v: unknown) => {
+        const s = JSON.stringify(v);
+        return s.length > 600 ? s.slice(0, 600) + "…" : s;
+      };
+      let tgl = "(-)";
+      let ros = "(-)";
+      try {
+        tgl = id
+          ? cut(await fetchPembimbingDates(id, token || ""))
+          : "TANPA @user_id!";
+      } catch (e) {
+        tgl = `ERROR ${e instanceof Error ? e.message : String(e)}`;
+      }
+      try {
+        ros = savedNip
+          ? cut(await fetchSupervisedStudents(savedNip, token || ""))
+          : "TANPA nip!";
+      } catch (e) {
+        ros = `ERROR ${e instanceof Error ? e.message : String(e)}`;
+      }
+      Alert.alert(
+        "Debug Dosen",
+        `@user_id: ${id ?? "(KOSONG!)"}\nnip: ${savedNip ?? "-"}\n\n` +
+          `[pembimbing-tanggal]\n${tgl}\n\n[peserta-bimbing]\n${ros}`,
+      );
+    } catch (e) {
+      Alert.alert("Debug", String(e));
+    }
+  };
+
   const confirmLogout = () => {
     Alert.alert("Konfirmasi", "Yakin ingin keluar akun?", [
       { text: "Batal", style: "cancel" },
@@ -403,9 +442,11 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
                 >
                   <Ionicons name="chevron-back" size={20} color={ACCENT} />
                 </TouchableOpacity>
-                <Text style={styles.calTitle}>
-                  {MONTHS[viewMonth]} {viewYear}
-                </Text>
+                <TouchableOpacity onLongPress={showDebug} delayLongPress={500}>
+                  <Text style={styles.calTitle}>
+                    {MONTHS[viewMonth]} {viewYear}
+                  </Text>
+                </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => changeMonth(1)}
                   style={styles.dateArrow}
