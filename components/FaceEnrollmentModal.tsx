@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -12,17 +12,16 @@ import {
   View,
 } from "react-native";
 import {
+  Camera,
   CommonResolutions,
   useCameraDevice,
   useCameraPermission,
   usePhotoOutput,
 } from "react-native-vision-camera";
-import { Camera as FaceDetectorCamera } from "react-native-vision-camera-face-detector";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ENROLLMENT_CONSISTENCY_MIN,
   faceSimilarity,
-  FACE_DETECTOR_OPTIONS,
   getFaceEmbedding,
   MultipleFacesDetectedError,
   NoFaceDetectedError,
@@ -33,7 +32,6 @@ import {
   MIN_ENROLLMENT_PHOTOS,
   saveEnrollment,
 } from "../utils/faceEnrollment";
-import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 
 interface CaptureSlot {
   embedding: Float32Array;
@@ -61,9 +59,6 @@ const CAPTURE_PROMPTS = [
   "Terakhir - posisi/cahaya sedikit berbeda",
 ];
 
-/** Jeda minimum antar-pemrosesan frame wajah (~9x/detik). */
-const FACE_TICK_MS = 110;
-
 export default function FaceEnrollmentModal({
   visible,
   onClose,
@@ -71,7 +66,6 @@ export default function FaceEnrollmentModal({
 }: FaceEnrollmentModalProps) {
   const { hasPermission, requestPermission } = useCameraPermission();
   const cameraDevice = useCameraDevice("front");
-  const qualityGate = useFaceQualityGate();
   const insets = useSafeAreaInsets();
   // Resolusi sama dengan kamera absensi (LKHScreen). config & outputs
   // di-memo agar referensinya stabil - lihat komentar panjang di LKHScreen:
@@ -86,20 +80,6 @@ export default function FaceEnrollmentModal({
   // stream frame, iOS membatasi exposure ke satu durasi frame, jadi 30fps
   // membuat preview gelap di ruangan yang cahayanya sebenarnya cukup.
   const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
-  // Batasi pemrosesan wajah di thread JS (~9x/detik) supaya panduan di layar
-  // tidak memicu render ulang puluhan kali per detik.
-  const lastFaceTickRef = useRef(0);
-  const handleFaces = useCallback(
-    (faces: Parameters<typeof qualityGate.onFacesDetected>[0]) => {
-      const now = Date.now();
-      if (now - lastFaceTickRef.current < FACE_TICK_MS) return;
-      lastFaceTickRef.current = now;
-      qualityGate.onFacesDetected(faces);
-    },
-    // onFacesDetected sudah stabil (useCallback([]) di dalam hook-nya).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [qualityGate.onFacesDetected],
-  );
 
   const [captures, setCaptures] = useState<CaptureSlot[]>([]);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
@@ -204,19 +184,18 @@ export default function FaceEnrollmentModal({
     <Modal visible={visible} animationType="slide">
       <View style={styles.container}>
         {hasPermission && cameraDevice ? (
-          <FaceDetectorCamera
+          // Kamera BIASA (tanpa detektor wajah live). Pendaftaran tidak butuh
+          // panduan real-time - keabsahan foto sepenuhnya diperiksa di foto
+          // hasil jepret lewat getFaceEmbedding() (deteksi + qualityGate +
+          // alignment). Melepas detektor live di sini MENGHILANGKAN sumber
+          // force-close SIGSEGV MLKit di iOS 26 yang muncul saat mendaftar.
+          <Camera
             style={styles.camera}
             device={cameraDevice}
             isActive={visible}
             outputs={cameraOutputs}
             constraints={cameraConstraints}
             enableLowLightBoost
-            onFacesDetected={handleFaces}
-            onError={qualityGate.onFaceDetectionError}
-            performanceMode="fast"
-            runLandmarks={false}
-            runClassifications={false}
-            minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
           />
         ) : (
           <View style={[styles.camera, styles.permissionPane]}>
@@ -274,7 +253,9 @@ export default function FaceEnrollmentModal({
           pointerEvents="box-none"
         >
           <BlurView intensity={50} tint="dark" style={styles.statusPill}>
-            <Text style={styles.statusText}>{qualityGate.message}</Text>
+            <Text style={styles.statusText}>
+              Posisikan wajah di tengah bingkai, lalu tekan tombol.
+            </Text>
           </BlurView>
           <BlurView intensity={50} tint="dark" style={styles.promptPill}>
             <Text style={styles.promptText}>{progressLabel}</Text>
