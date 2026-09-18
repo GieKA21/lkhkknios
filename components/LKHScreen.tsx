@@ -31,10 +31,6 @@ import {
     syncEnrollmentFromServer,
 } from "../utils/faceEnrollment";
 import { decideAttendance } from "../utils/verificationAgent";
-import {
-  ensurePresensiProgramId,
-  PRESENSI_DESKRIPSI,
-} from "../utils/presensiProgram";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
@@ -112,7 +108,13 @@ function toDateKey(date: Date): string {
 }
 
 function generateLocalRecordCode(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  // Format meniru kode simpan_lkh yang terbukti diterima server (terlihat di
+  // tabel logging): 40 heksadesimal + "@" + timestamp milidetik. Server
+  // memakainya sebagai kunci unik anti-duplikat saat retry.
+  const hex = Array.from({ length: 40 }, () =>
+    Math.floor(Math.random() * 16).toString(16),
+  ).join("");
+  return `${hex}@${Date.now()}`;
 }
 
 /**
@@ -681,7 +683,6 @@ export default function LKHScreen() {
 
   const syncOneRecord = async (
     penggunaId: string,
-    programId: string,
     authToken: string,
     record: LKHRecord,
   ): Promise<{ ok: boolean; message?: string }> => {
@@ -694,18 +695,16 @@ export default function LKHScreen() {
     }
 
     const formData = new FormData();
-    // Server /api/simpan-lkh mengunci record dengan pengguna_id NUMERIK
-    // (dipastikan dari source Flutter: postSimpanLkh(penggunaId, programId,
-    // kode, deskripsi, ...)), BUKAN nim - dulu keliru mengirim nim.
+    // Payload PERSIS seperti request simpan_lkh yang TERBUKTI berhasil di
+    // server (terlihat di tabel logging dari app resmi mahasiswa lain):
+    //   {pengguna_id, kode, koordinat, waktu} + foto
+    // TANPA program_id / deskripsi - server menerima presensi tanpa keduanya.
+    // Karena itu app ini tidak lagi butuh /api/program (yang error di server);
+    // presensi cukup dikirim seperti ini. pengguna_id = id NUMERIK, bukan nim.
     formData.append("pengguna_id", penggunaId);
     formData.append("kode", record.kode || generateLocalRecordCode());
-    formData.append("waktu", record.date);
     formData.append("koordinat", record.koordinat || "");
-    // program_id & deskripsi WAJIB server. Aplikasi ini fokus presensi, jadi
-    // keduanya diisi otomatis: program default (lihat utils/presensiProgram.ts)
-    // dan deskripsi tetap. Pengguna tidak memilih/mengisi apa pun.
-    formData.append("program_id", programId);
-    formData.append("deskripsi", record.deskripsi || PRESENSI_DESKRIPSI);
+    formData.append("waktu", record.date);
     formData.append("device_info", getDeviceInfoStr());
     formData.append("version", APP_VERSION);
     // React Native's FormData accepts this {uri,name,type} file shape (not
@@ -753,22 +752,6 @@ export default function LKHScreen() {
         return;
       }
 
-      // Presensi disimpan sebagai LKH ke sebuah program default (server tak
-      // punya endpoint absen terpisah). Siapkan program_id sekali sebelum
-      // loop - dibuat otomatis bila peserta belum punya program.
-      let programId: string;
-      try {
-        programId = await ensurePresensiProgramId(currentToken);
-      } catch (e) {
-        Alert.alert(
-          "Sinkronisasi Gagal",
-          `Tidak dapat menyiapkan program presensi di server.\n\n${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-        return;
-      }
-
       const updatedRecords = { ...records };
       let countSync = 0;
       let countFailed = 0;
@@ -786,12 +769,7 @@ export default function LKHScreen() {
         }
 
         try {
-          const result = await syncOneRecord(
-            penggunaId,
-            programId,
-            currentToken,
-            record,
-          );
+          const result = await syncOneRecord(penggunaId, currentToken, record);
           if (result.ok) {
             updatedRecords[key] = { ...record, status: "synced" };
             countSync++;
