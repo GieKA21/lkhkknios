@@ -68,6 +68,9 @@ export async function scheduleDailyAttendanceReminders(
       content: {
         title: "Belum Absen LKH",
         body: "Jangan lupa isi laporan dan foto absensi hari ini ya!",
+        // sound WAJIB di konten agar berbunyi saat notifikasi menyala di
+        // latar - shouldPlaySound di handler hanya untuk saat app terbuka.
+        sound: "default",
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
@@ -82,6 +85,7 @@ export async function scheduleDailyAttendanceReminders(
       content: {
         title: "Belum Absen LKH",
         body: "Hari sudah malam dan kamu belum absen LKH hari ini. Segera isi sebelum lupa!",
+        sound: "default",
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DATE,
