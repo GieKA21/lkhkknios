@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import Constants from "expo-constants";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,95 +13,48 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
-import { API_BASE, profilePhotoHeaders } from "../utils/api";
+import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
 import { DEMO_TOKEN } from "../utils/demoMode";
 import {
-  approveLkh,
-  checkLkh,
+  fetchPembimbingDates,
   fetchSupervisedLkh,
   fetchSupervisedStudents,
-  type SupervisedStudent,
 } from "../utils/pembimbingApi";
 
 interface PembimbingScreenProps {
   onLogout: () => void;
 }
 
-/** Status LKH ringkas per mahasiswa (untuk chip). */
-type LkhStatus = "approved" | "checked" | "pending" | "none";
-
-/**
- * Detail LKH satu mahasiswa pada satu tanggal. Bentuknya mengikuti respons
- * /api/peserta-bimbing-lkh dari source Flutter resmi: tiap item punya
- * {id, kode, lkh}, dan lkh (null bila belum mengisi) berisi
- * {id, waktu, foto, deskripsi, program:{nama}, koordinat, checked, approved}.
- */
-interface LkhDetail {
-  hasLkh: boolean;
-  lkhId?: string | number;
-  waktu?: string;
+/** Satu mahasiswa bimbingan (dari /api/peserta-bimbing). */
+interface Student {
+  id?: string | number;
+  kode: string; // NIM
+  nama: string;
   foto?: string;
-  deskripsi?: string;
-  programNama?: string;
-  koordinat?: string;
-  checked: boolean;
-  approved: boolean;
+  prodi?: string;
+  kecamatan?: string;
 }
 
-interface StudentRow extends SupervisedStudent {
-  lkhStatus?: LkhStatus;
-}
+/** Ringkasan kehadiran satu tanggal (dari /api/pembimbing-tanggal). */
+type DayFill = "all" | "some" | "none";
 
-interface DetailTarget {
-  student: StudentRow;
-  detail: LkhDetail;
-}
-
-// Data contoh untuk sesi DEMO pembimbing (token === DEMO_TOKEN).
-const SAMPLE_STUDENTS: StudentRow[] = [
-  { id: 1, kode: "60200122001", nama: "Andi Pratama" },
-  { id: 2, kode: "60200122002", nama: "Siti Nurhaliza" },
-  { id: 3, kode: "60200122003", nama: "Muh. Rizky" },
-  { id: 4, kode: "60200122004", nama: "Dewi Lestari" },
-  { id: 5, kode: "60200122005", nama: "Ahmad Fauzan" },
+// Data contoh untuk sesi DEMO pembimbing.
+const SAMPLE_STUDENTS: Student[] = [
+  { id: 1, kode: "60200122001", nama: "Andi Pratama", prodi: "Teknik Informatika", kecamatan: "Kec. Somba Opu" },
+  { id: 2, kode: "60200122002", nama: "Siti Nurhaliza", prodi: "Ilmu Hukum", kecamatan: "Kec. Somba Opu" },
+  { id: 3, kode: "60200122003", nama: "Muh. Rizky", prodi: "Hukum Keluarga", kecamatan: "Kec. Somba Opu" },
+  { id: 4, kode: "60200122004", nama: "Dewi Lestari", prodi: "Ilmu Hukum", kecamatan: "Kec. Somba Opu" },
+  { id: 5, kode: "60200122005", nama: "Ahmad Fauzan", prodi: "Teknik Informatika", kecamatan: "Kec. Somba Opu" },
 ];
 
-// LKH contoh (mode demo) sehingga alur tinjau/setujui bisa dicoba tanpa server.
-function sampleLkhFor(kode: string, tanggal: string): LkhDetail | null {
-  const seed: Record<string, Partial<LkhDetail>> = {
-    "60200122001": { approved: true, checked: true },
-    "60200122002": { checked: true },
-    "60200122003": {},
-    "60200122005": {},
-  };
-  const s = seed[kode];
-  if (!s) return null; // 60200122004 = belum mengisi
-  return {
-    hasLkh: true,
-    lkhId: `demo-${kode}`,
-    waktu: tanggal,
-    deskripsi:
-      "Membantu mengajar di sekolah dasar dan menyiapkan program kerja posko.",
-    programNama: "Program Kerja KKN",
-    koordinat: "-5.2082,119.4797",
-    checked: !!s.checked,
-    approved: !!s.approved,
-  };
-}
-
-const STATUS_LABEL: Record<LkhStatus, string> = {
-  approved: "Disetujui",
-  checked: "Diperiksa",
-  pending: "Belum diperiksa",
-  none: "Belum mengisi",
-};
-
+const WEEKDAYS = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const MONTHS = [
-  "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
-  "Jul", "Agu", "Sep", "Okt", "Nov", "Des",
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
 ];
 
 function initials(name: string): string {
@@ -111,24 +64,17 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+function pad(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
 }
-
-function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+function dateKey(y: number, m: number, d: number): string {
+  return `${y}-${pad(m + 1)}-${pad(d)}`;
 }
-
 function prettyDate(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   if (isNaN(d.getTime())) return dateStr;
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  return `${days[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function get(obj: unknown, key: string): unknown {
@@ -136,55 +82,77 @@ function get(obj: unknown, key: string): unknown {
     ? (obj as Record<string, unknown>)[key]
     : undefined;
 }
+function num(v: unknown): number {
+  return typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+}
 
-/** Ubah respons /api/peserta-bimbing-lkh menjadi peta kode(NIM) -> LkhDetail. */
-function parseLkhList(list: unknown): Record<string, LkhDetail> {
-  const map: Record<string, LkhDetail> = {};
+/** Parse /api/peserta-bimbing menjadi daftar mahasiswa dengan detailnya. */
+function parseRoster(list: unknown): Student[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((it): Student | null => {
+      const kode = get(it, "kode");
+      if (kode == null) return null;
+      return {
+        id: get(it, "id") as string | number | undefined,
+        kode: String(kode),
+        nama: (get(it, "nama") as string) || "(tanpa nama)",
+        foto: get(it, "foto") as string | undefined,
+        prodi: get(get(it, "prodi"), "nama") as string | undefined,
+        kecamatan: get(get(it, "wilayahKec"), "nama") as string | undefined,
+      };
+    })
+    .filter((s): s is Student => s !== null);
+}
+
+/** Parse /api/peserta-bimbing-lkh menjadi peta kode(NIM) -> mengisi?(boolean). */
+function parseHadir(list: unknown): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
   if (!Array.isArray(list)) return map;
   for (const item of list) {
-    const kodeRaw = get(item, "kode");
-    const kode = kodeRaw != null ? String(kodeRaw) : null;
-    if (!kode) continue;
-    const lkh = get(item, "lkh");
-    if (lkh && typeof lkh === "object") {
-      map[kode] = {
-        hasLkh: true,
-        lkhId: get(lkh, "id") as string | number | undefined,
-        waktu: get(lkh, "waktu") as string | undefined,
-        foto: get(lkh, "foto") as string | undefined,
-        deskripsi: get(lkh, "deskripsi") as string | undefined,
-        programNama: get(get(lkh, "program"), "nama") as string | undefined,
-        koordinat: get(lkh, "koordinat") as string | undefined,
-        checked: num(get(lkh, "checked")) === 1,
-        approved: num(get(lkh, "approved")) === 1,
-      };
-    } else {
-      map[kode] = { hasLkh: false, checked: false, approved: false };
-    }
+    const kode = get(item, "kode");
+    if (kode == null) continue;
+    map[String(kode)] = get(item, "lkh") != null;
   }
   return map;
 }
 
-function statusOf(detail?: LkhDetail): LkhStatus {
-  if (!detail || !detail.hasLkh) return "none";
-  if (detail.approved) return "approved";
-  if (detail.checked) return "checked";
-  return "pending";
+/** Parse /api/pembimbing-tanggal menjadi peta tanggal -> tingkat kehadiran. */
+function parseDays(list: unknown): Record<string, DayFill> {
+  const map: Record<string, DayFill> = {};
+  if (!Array.isArray(list)) return map;
+  for (const item of list) {
+    const waktu = get(item, "waktu");
+    if (waktu == null) continue;
+    const key = String(waktu).slice(0, 10);
+    const filled = num(get(item, "checked"));
+    const total = num(get(item, "total"));
+    map[key] =
+      total > 0 && filled >= total ? "all" : filled > 0 ? "some" : "none";
+  }
+  return map;
 }
 
 export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const [nama, setNama] = useState("Memuat...");
   const [nip, setNip] = useState("");
+  const [prodi, setProdi] = useState("");
   const [isDemo, setIsDemo] = useState(false);
-  const [students, setStudents] = useState<StudentRow[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [dayFill, setDayFill] = useState<Record<string, DayFill>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedDate, setSelectedDate] = useState(todayStr());
-  const [lkhByKode, setLkhByKode] = useState<Record<string, LkhDetail>>({});
-  const [lkhLoading, setLkhLoading] = useState(false);
-  const [detail, setDetail] = useState<DetailTarget | null>(null);
-  const [approving, setApproving] = useState(false);
+  const now = new Date();
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+
+  // Modal per-tanggal
+  const [modalDate, setModalDate] = useState<string | null>(null);
+  const [hadir, setHadir] = useState<Record<string, boolean>>({});
+  const [hadirLoading, setHadirLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [onlyAbsent, setOnlyAbsent] = useState(false);
 
   const tokenRef = useRef<string | null>(null);
   const nipRef = useRef<string>("");
@@ -198,10 +166,11 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     setLoading(true);
     setError(null);
     try {
-      const [profileJson, token, savedNip] = await Promise.all([
+      const [profileJson, token, savedNip, savedId] = await Promise.all([
         AsyncStorage.getItem("@user_profile"),
         AsyncStorage.getItem("@user_token"),
         AsyncStorage.getItem("@user_nim"),
+        AsyncStorage.getItem("@user_id"),
       ]);
       tokenRef.current = token;
       nipRef.current = savedNip || "";
@@ -210,8 +179,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         const p = JSON.parse(profileJson);
         setNama(p.nama || "Pembimbing");
         setNip(p.nip || savedNip || "");
-      } else {
-        setNip(savedNip || "");
+        setProdi(p.prodi || "");
       }
 
       const demo = token === DEMO_TOKEN;
@@ -219,112 +187,59 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
 
       if (demo) {
         setStudents(SAMPLE_STUDENTS);
-        loadLkhForDate(selectedDate, SAMPLE_STUDENTS, true);
+        setDayFill({ [dateKey(now.getFullYear(), now.getMonth(), 18)]: "some" });
         return;
       }
-
       if (!savedNip || !token) {
         setError("Sesi tidak lengkap. Silakan login ulang.");
         return;
       }
-      const list = await fetchSupervisedStudents(savedNip, token);
-      const roster = Array.isArray(list) ? (list as StudentRow[]) : [];
-      setStudents(roster);
-      loadLkhForDate(selectedDate, roster, false);
+
+      const [roster, dates] = await Promise.all([
+        fetchSupervisedStudents(savedNip, token),
+        savedId ? fetchPembimbingDates(savedId, token) : Promise.resolve([]),
+      ]);
+      setStudents(parseRoster(roster));
+      setDayFill(parseDays(dates));
     } catch (e) {
       console.error("Gagal memuat data pembimbing", e);
-      setError(
-        "Gagal mengambil daftar mahasiswa bimbingan dari server. Coba lagi.",
-      );
+      setError("Gagal mengambil data bimbingan dari server. Coba lagi.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Ambil LKH seluruh mahasiswa untuk satu tanggal, lalu petakan kode->detail.
-  const loadLkhForDate = useCallback(
-    async (date: string, roster: StudentRow[], demo: boolean) => {
-      setLkhLoading(true);
+  const openDate = useCallback(
+    async (date: string) => {
+      setModalDate(date);
+      setSearch("");
+      setOnlyAbsent(false);
+      setHadir({});
+      if (isDemo) {
+        // Contoh: sebagian hadir.
+        setHadir({
+          "60200122001": true,
+          "60200122002": true,
+          "60200122005": true,
+        });
+        return;
+      }
+      const token = tokenRef.current;
+      const nipToUse = nipRef.current;
+      if (!token || !nipToUse) return;
+      setHadirLoading(true);
       try {
-        if (demo) {
-          const map: Record<string, LkhDetail> = {};
-          for (const s of roster) {
-            const d = sampleLkhFor(String(s.kode), date);
-            if (d) map[String(s.kode)] = d;
-            else map[String(s.kode)] = { hasLkh: false, checked: false, approved: false };
-          }
-          setLkhByKode(map);
-          return;
-        }
-        const token = tokenRef.current;
-        const nipToUse = nipRef.current;
-        if (!token || !nipToUse) return;
         const raw = await fetchSupervisedLkh(nipToUse, date, token);
-        setLkhByKode(parseLkhList(raw));
+        setHadir(parseHadir(raw));
       } catch (e) {
-        console.error("Gagal memuat LKH tanggal", date, e);
-        // Kosongkan agar status jatuh ke "belum mengisi" alih-alih basi.
-        setLkhByKode({});
+        console.error("Gagal memuat kehadiran tanggal", date, e);
+        setHadir({});
       } finally {
-        setLkhLoading(false);
+        setHadirLoading(false);
       }
     },
-    [],
+    [isDemo],
   );
-
-  const changeDate = (days: number) => {
-    const next = shiftDate(selectedDate, days);
-    setSelectedDate(next);
-    loadLkhForDate(next, students, isDemo);
-  };
-
-  // Buka detail = otomatis tandai "diperiksa" (lkh-check), mengikuti app resmi.
-  const openDetail = async (student: StudentRow) => {
-    const d = lkhByKode[String(student.kode)];
-    if (!d || !d.hasLkh) return;
-    setDetail({ student, detail: d });
-
-    if (!d.checked && d.lkhId != null) {
-      // Tandai diperiksa di server + lokal.
-      if (!isDemo && tokenRef.current) {
-        try {
-          await checkLkh(d.lkhId, tokenRef.current);
-        } catch (e) {
-          console.error("Gagal menandai LKH diperiksa", e);
-        }
-      }
-      const updated = { ...d, checked: true };
-      setLkhByKode((m) => ({ ...m, [String(student.kode)]: updated }));
-      setDetail({ student, detail: updated });
-    }
-  };
-
-  const toggleApprove = async (value: boolean) => {
-    if (!detail) return;
-    const d = detail.detail;
-    if (d.lkhId == null) return;
-    setApproving(true);
-    try {
-      if (!isDemo && tokenRef.current) {
-        await approveLkh(d.lkhId, value ? 1 : 0, tokenRef.current);
-      }
-      const updated = { ...d, approved: value, checked: true };
-      setDetail({ student: detail.student, detail: updated });
-      setLkhByKode((m) => ({
-        ...m,
-        [String(detail.student.kode)]: updated,
-      }));
-    } catch (e) {
-      Alert.alert(
-        "Gagal",
-        `Tidak dapat menyimpan persetujuan ke server.\n\n${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-    } finally {
-      setApproving(false);
-    }
-  };
 
   const confirmLogout = () => {
     Alert.alert("Konfirmasi", "Yakin ingin keluar akun?", [
@@ -348,9 +263,46 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     ]);
   };
 
-  const submittedCount = students.filter(
-    (s) => lkhByKode[String(s.kode)]?.hasLkh,
-  ).length;
+  // ---- Kalender ----
+  const calendarCells = useMemo(() => {
+    const first = new Date(viewYear, viewMonth, 1);
+    const startWeekday = first.getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < startWeekday; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [viewYear, viewMonth]);
+
+  const changeMonth = (delta: number) => {
+    let m = viewMonth + delta;
+    let y = viewYear;
+    if (m < 0) {
+      m = 11;
+      y--;
+    } else if (m > 11) {
+      m = 0;
+      y++;
+    }
+    setViewMonth(m);
+    setViewYear(y);
+  };
+
+  // ---- Daftar mahasiswa terfilter (modal) ----
+  const filteredStudents = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return students.filter((s) => {
+      if (onlyAbsent && hadir[s.kode]) return false;
+      if (!q) return true;
+      return (
+        s.nama.toLowerCase().includes(q) ||
+        s.kode.toLowerCase().includes(q) ||
+        (s.prodi || "").toLowerCase().includes(q) ||
+        (s.kecamatan || "").toLowerCase().includes(q)
+      );
+    });
+  }, [students, hadir, search, onlyAbsent]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -361,52 +313,24 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
               <Text style={styles.avatarText}>{initials(nama)}</Text>
             </View>
             <View style={styles.headerInfo}>
-              <Text style={styles.roleBadge}>PEMBIMBING</Text>
+              <Text style={styles.roleBadge}>DOSEN PEMBIMBING</Text>
               <Text style={styles.name}>{nama}</Text>
               <Text style={styles.nip}>{nip ? `NIP ${nip}` : "-"}</Text>
+              {!!prodi && <Text style={styles.nip}>{prodi}</Text>}
             </View>
           </BlurView>
         </View>
 
         {isDemo && (
           <Text style={styles.demoNote}>
-            Mode Demo Pembimbing - data mahasiswa & LKH di bawah adalah CONTOH.
+            Mode Demo Pembimbing - data di bawah adalah CONTOH.
           </Text>
         )}
-
-        {/* Pemilih tanggal - dashboard dosen berbasis tanggal (seperti app resmi) */}
-        <View style={styles.dateBar}>
-          <TouchableOpacity
-            onPress={() => changeDate(-1)}
-            style={styles.dateArrow}
-          >
-            <Ionicons name="chevron-back" size={20} color={ACCENT} />
-          </TouchableOpacity>
-          <View style={styles.dateCenter}>
-            <Text style={styles.dateText}>{prettyDate(selectedDate)}</Text>
-            <Text style={styles.dateSub}>
-              {lkhLoading
-                ? "memuat..."
-                : `${submittedCount} dari ${students.length} mengisi`}
-            </Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => changeDate(1)}
-            style={styles.dateArrow}
-          >
-            <Ionicons name="chevron-forward" size={20} color={ACCENT} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Mahasiswa Bimbingan</Text>
-          {!loading && <Text style={styles.countPill}>{students.length}</Text>}
-        </View>
 
         {loading ? (
           <View style={styles.centerBox}>
             <ActivityIndicator size="large" color={ACCENT} />
-            <Text style={styles.centerText}>Memuat daftar bimbingan...</Text>
+            <Text style={styles.centerText}>Memuat data bimbingan...</Text>
           </View>
         ) : error ? (
           <View style={styles.centerBox}>
@@ -416,146 +340,197 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
               <Text style={styles.retryText}>Coba Lagi</Text>
             </TouchableOpacity>
           </View>
-        ) : students.length === 0 ? (
-          <View style={styles.centerBox}>
-            <Ionicons name="people-outline" size={32} color="#8E8E93" />
-            <Text style={styles.centerText}>
-              Belum ada mahasiswa bimbingan.
-            </Text>
-          </View>
         ) : (
-          <View style={styles.glassShadow}>
-            <BlurView intensity={45} tint="light" style={styles.listCard}>
-              {students.map((s, i) => {
-                const d = lkhByKode[String(s.kode)];
-                const status = statusOf(d);
-                const tappable = !!d?.hasLkh;
-                return (
-                  <TouchableOpacity
-                    key={s.id ?? s.kode ?? i}
-                    activeOpacity={tappable ? 0.6 : 1}
-                    onPress={() => tappable && openDetail(s)}
+          <>
+            {/* Kalender kehadiran */}
+            <View style={styles.calendarCard}>
+              <View style={styles.calHeader}>
+                <TouchableOpacity
+                  onPress={() => changeMonth(-1)}
+                  style={styles.dateArrow}
+                >
+                  <Ionicons name="chevron-back" size={20} color={ACCENT} />
+                </TouchableOpacity>
+                <Text style={styles.calTitle}>
+                  {MONTHS[viewMonth]} {viewYear}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => changeMonth(1)}
+                  style={styles.dateArrow}
+                >
+                  <Ionicons name="chevron-forward" size={20} color={ACCENT} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.weekRow}>
+                {WEEKDAYS.map((w, i) => (
+                  <Text
+                    key={w}
                     style={[
-                      styles.studentRow,
-                      i < students.length - 1 && styles.studentRowDivider,
+                      styles.weekday,
+                      (i === 0 || i === 6) && styles.weekdayEnd,
                     ]}
                   >
-                    <View style={styles.studentAvatar}>
-                      <Text style={styles.studentAvatarText}>
-                        {initials(s.nama || "?")}
-                      </Text>
-                    </View>
-                    <View style={styles.studentInfo}>
-                      <Text style={styles.studentName} numberOfLines={1}>
-                        {s.nama || "(tanpa nama)"}
-                      </Text>
-                      <Text style={styles.studentNim}>{s.kode || "-"}</Text>
-                    </View>
-                    <StatusChip status={status} />
-                    {tappable && (
-                      <Ionicons
-                        name="chevron-forward"
-                        size={16}
-                        color="#B8C0CA"
-                        style={{ marginLeft: 4 }}
-                      />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </BlurView>
-          </View>
+                    {w}
+                  </Text>
+                ))}
+              </View>
+
+              <View style={styles.grid}>
+                {calendarCells.map((d, i) => {
+                  if (d === null)
+                    return <View key={`e${i}`} style={styles.cell} />;
+                  const key = dateKey(viewYear, viewMonth, d);
+                  const fill = dayFill[key];
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={styles.cell}
+                      activeOpacity={fill ? 0.6 : 1}
+                      onPress={() => fill && openDate(key)}
+                    >
+                      <View
+                        style={[
+                          styles.dayDot,
+                          fill === "all" && styles.dayAll,
+                          fill === "some" && styles.daySome,
+                          fill === "none" && styles.dayNone,
+                        ]}
+                      >
+                        <Text style={styles.dayText}>{d}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <View style={styles.legend}>
+                <Legend color="#99B9F7" label="Hadir semua" />
+                <Legend color="#F5D95E" label="Sebagian" />
+                <Legend color="#F7CCCE" label="Tidak ada" />
+              </View>
+            </View>
+
+            <Text style={styles.hintText}>
+              Ketuk tanggal berwarna untuk melihat kehadiran mahasiswa hari itu.
+            </Text>
+          </>
         )}
       </ScrollView>
 
-      {/* Detail LKH + tinjau/setujui */}
+      {/* Modal daftar kehadiran per tanggal */}
       <Modal
-        visible={!!detail}
+        visible={!!modalDate}
         animationType="slide"
         transparent
-        onRequestClose={() => setDetail(null)}
+        onRequestClose={() => setModalDate(null)}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            {detail && (
-              <ScrollView>
-                <View style={styles.modalHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.modalName}>
-                      {detail.student.nama || "(tanpa nama)"}
-                    </Text>
-                    <Text style={styles.modalNim}>
-                      {detail.student.kode} · {prettyDate(selectedDate)}
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={() => setDetail(null)}>
-                    <Ionicons name="close-circle" size={28} color="#B8C0CA" />
-                  </TouchableOpacity>
-                </View>
+            <Text style={styles.modalTitle}>
+              {modalDate ? prettyDate(modalDate) : ""}
+            </Text>
 
-                {detail.detail.foto ? (
-                  <Image
-                    source={{
-                      uri: `${API_BASE}/uploads/${detail.detail.foto}`,
-                      headers: profilePhotoHeaders(tokenRef.current || ""),
-                    }}
-                    style={styles.modalPhoto}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[styles.modalPhoto, styles.modalPhotoEmpty]}>
-                    <Ionicons name="image-outline" size={32} color="#B8C0CA" />
-                    <Text style={styles.centerText}>Tanpa foto</Text>
-                  </View>
-                )}
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={16} color="#8E8E93" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Cari nama, NIM, prodi, kecamatan"
+                placeholderTextColor="#9AA3AD"
+                value={search}
+                onChangeText={setSearch}
+              />
+            </View>
 
-                {!!detail.detail.programNama && (
-                  <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>Program</Text>
-                    <Text style={styles.fieldValue}>
-                      {detail.detail.programNama}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.field}>
-                  <Text style={styles.fieldLabel}>Deskripsi kegiatan</Text>
-                  <Text style={styles.fieldValue}>
-                    {detail.detail.deskripsi || "(tidak ada deskripsi)"}
-                  </Text>
-                </View>
-                {!!detail.detail.koordinat && (
-                  <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>Koordinat</Text>
-                    <Text style={styles.fieldValue}>
-                      {detail.detail.koordinat}
-                    </Text>
-                  </View>
-                )}
+            <View style={styles.filterRow}>
+              <Text style={styles.filterLabel}>
+                Tampilkan hanya yang tidak mengisi
+              </Text>
+              <Switch
+                value={onlyAbsent}
+                onValueChange={setOnlyAbsent}
+                trackColor={{ false: "#CFD6DD", true: "#E9A8AB" }}
+                thumbColor={onlyAbsent ? "#C0392B" : "#F4F4F4"}
+              />
+            </View>
+            <Text style={styles.totalText}>
+              {hadirLoading
+                ? "Memuat kehadiran..."
+                : `Total tampil: ${filteredStudents.length}`}
+            </Text>
 
-                <View style={styles.approveRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.approveLabel}>Setujui LKH ini</Text>
-                    <Text style={styles.approveHint}>
-                      {detail.detail.approved
-                        ? "Sudah disetujui"
-                        : detail.detail.checked
-                          ? "Sudah diperiksa, belum disetujui"
-                          : "Belum diperiksa"}
-                    </Text>
+            <ScrollView style={{ marginTop: 8 }}>
+              {filteredStudents.map((s, i) => {
+                const isHadir = !!hadir[s.kode];
+                return (
+                  <View
+                    key={s.id ?? s.kode ?? i}
+                    style={[
+                      styles.studentCard,
+                      isHadir ? styles.cardHadir : styles.cardAbsent,
+                    ]}
+                  >
+                    {s.foto ? (
+                      <Image
+                        source={{
+                          uri: profilePhotoUrl(s.foto),
+                          headers: profilePhotoHeaders(tokenRef.current || ""),
+                        }}
+                        style={styles.cardPhoto}
+                      />
+                    ) : (
+                      <View style={[styles.cardPhoto, styles.cardPhotoEmpty]}>
+                        <Text style={styles.studentAvatarText}>
+                          {initials(s.nama)}
+                        </Text>
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardName} numberOfLines={1}>
+                        {s.nama}
+                      </Text>
+                      <Text style={styles.cardMeta}>NIM: {s.kode}</Text>
+                      {!!s.prodi && (
+                        <Text style={styles.cardMeta} numberOfLines={1}>
+                          {s.prodi}
+                        </Text>
+                      )}
+                      {!!s.kecamatan && (
+                        <Text style={styles.cardMeta}>{s.kecamatan}</Text>
+                      )}
+                      <View
+                        style={[
+                          styles.badge,
+                          isHadir ? styles.badgeHadir : styles.badgeAbsent,
+                        ]}
+                      >
+                        <Ionicons
+                          name={isHadir ? "checkmark-circle" : "close-circle"}
+                          size={14}
+                          color={isHadir ? "#1B7F4D" : "#C0392B"}
+                        />
+                        <Text
+                          style={[
+                            styles.badgeText,
+                            { color: isHadir ? "#1B7F4D" : "#C0392B" },
+                          ]}
+                        >
+                          {isHadir ? "Hadir" : "Tidak mengisi"}
+                        </Text>
+                      </View>
+                    </View>
                   </View>
-                  {approving ? (
-                    <ActivityIndicator color={ACCENT} />
-                  ) : (
-                    <Switch
-                      value={detail.detail.approved}
-                      onValueChange={toggleApprove}
-                      trackColor={{ false: "#CFD6DD", true: "#8FD3AE" }}
-                      thumbColor={detail.detail.approved ? ACCENT : "#F4F4F4"}
-                    />
-                  )}
-                </View>
-              </ScrollView>
-            )}
+                );
+              })}
+              <View style={{ height: 8 }} />
+            </ScrollView>
+
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => setModalDate(null)}
+            >
+              <Text style={styles.closeText}>Tutup</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -577,26 +552,11 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   );
 }
 
-function StatusChip({ status }: { status: LkhStatus }) {
-  const style =
-    status === "approved"
-      ? styles.chipApproved
-      : status === "checked"
-        ? styles.chipChecked
-        : status === "pending"
-          ? styles.chipPending
-          : styles.chipNone;
-  const textStyle =
-    status === "approved"
-      ? styles.chipApprovedText
-      : status === "checked"
-        ? styles.chipCheckedText
-        : status === "pending"
-          ? styles.chipPendingText
-          : styles.chipNoneText;
+function Legend({ color, label }: { color: string; label: string }) {
   return (
-    <View style={[styles.chip, style]}>
-      <Text style={[styles.chipText, textStyle]}>{STATUS_LABEL[status]}</Text>
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 }
@@ -656,97 +616,80 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     overflow: "hidden",
   },
-  dateBar: {
-    flexDirection: "row",
-    alignItems: "center",
+  calendarCard: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 8,
-    marginBottom: 16,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
     borderColor: "#E4E9EF",
   },
+  calHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  calTitle: { fontSize: 16, fontWeight: "800", color: ACCENT },
   dateArrow: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(14,120,61,0.10)",
   },
-  dateCenter: { flex: 1, alignItems: "center" },
-  dateText: { fontSize: 15, fontWeight: "700", color: TEXT_PRIMARY },
-  dateSub: { fontSize: 12, color: TEXT_SECONDARY, marginTop: 1 },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 10,
-    paddingHorizontal: 4,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: TEXT_PRIMARY,
+  weekRow: { flexDirection: "row", marginBottom: 6 },
+  weekday: {
     flex: 1,
-  },
-  countPill: {
-    fontSize: 13,
+    textAlign: "center",
+    fontSize: 12,
     fontWeight: "700",
-    color: ACCENT,
-    backgroundColor: "rgba(14,120,61,0.12)",
-    paddingHorizontal: 10,
-    paddingVertical: 2,
-    borderRadius: 12,
-    overflow: "hidden",
+    color: TEXT_SECONDARY,
   },
-  listCard: {
-    backgroundColor: "rgba(255,255,255,0.45)",
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
-  },
-  studentRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-  },
-  studentRowDivider: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(60,75,92,0.18)",
-  },
-  studentAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(14,120,61,0.15)",
+  weekdayEnd: { color: "#C0392B" },
+  grid: { flexDirection: "row", flexWrap: "wrap" },
+  cell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
+    padding: 3,
   },
-  studentAvatarText: { color: ACCENT, fontSize: 15, fontWeight: "700" },
-  studentInfo: { flex: 1 },
-  studentName: { fontSize: 15, fontWeight: "600", color: TEXT_PRIMARY },
-  studentNim: { fontSize: 12.5, color: TEXT_SECONDARY, marginTop: 1 },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    overflow: "hidden",
+  dayDot: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    maxWidth: 44,
+    maxHeight: 44,
   },
-  chipText: { fontSize: 11, fontWeight: "700" },
-  chipApproved: { backgroundColor: "rgba(27,127,77,0.15)" },
-  chipApprovedText: { color: "#1B7F4D" },
-  chipChecked: { backgroundColor: "rgba(14,120,134,0.15)" },
-  chipCheckedText: { color: "#0E7C86" },
-  chipPending: { backgroundColor: "rgba(180,84,30,0.15)" },
-  chipPendingText: { color: "#B4541E" },
-  chipNone: { backgroundColor: "rgba(110,110,115,0.15)" },
-  chipNoneText: { color: TEXT_SECONDARY },
+  dayAll: { backgroundColor: "#99B9F7" },
+  daySome: { backgroundColor: "#F5D95E" },
+  dayNone: { backgroundColor: "#F7CCCE" },
+  dayText: { fontSize: 14, fontWeight: "600", color: "#1C1C1E" },
+  legend: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E4E9EF",
+  },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  legendDot: { width: 14, height: 14, borderRadius: 7 },
+  legendText: { fontSize: 12, color: TEXT_SECONDARY },
+  hintText: {
+    fontSize: 12.5,
+    color: TEXT_SECONDARY,
+    textAlign: "center",
+    marginTop: 14,
+    paddingHorizontal: 12,
+  },
   centerBox: {
     alignItems: "center",
     justifyContent: "center",
-    padding: 32,
+    padding: 40,
     gap: 10,
   },
   centerText: { color: TEXT_SECONDARY, fontSize: 14, textAlign: "center" },
@@ -764,57 +707,83 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   retryText: { color: "#FFF", fontWeight: "700" },
+  // Modal
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "flex-end",
   },
   modalCard: {
-    backgroundColor: "#F7F9FB",
+    backgroundColor: "#F2ECF0",
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
-    padding: 20,
-    maxHeight: "88%",
+    padding: 18,
+    maxHeight: "90%",
   },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "flex-start",
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: TEXT_PRIMARY,
+    textAlign: "center",
     marginBottom: 14,
   },
-  modalName: { fontSize: 18, fontWeight: "800", color: TEXT_PRIMARY },
-  modalNim: { fontSize: 13, color: TEXT_SECONDARY, marginTop: 2 },
-  modalPhoto: {
-    width: "100%",
-    aspectRatio: 3 / 4,
-    maxHeight: 340,
-    borderRadius: 16,
-    backgroundColor: "#E4E9EF",
-    marginBottom: 16,
-  },
-  modalPhotoEmpty: { alignItems: "center", justifyContent: "center", gap: 6 },
-  field: { marginBottom: 14 },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.5,
-    color: TEXT_SECONDARY,
-    textTransform: "uppercase",
-    marginBottom: 3,
-  },
-  fieldValue: { fontSize: 15, color: TEXT_PRIMARY, lineHeight: 21 },
-  approveRow: {
+  searchBox: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 4,
-    marginBottom: 8,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderWidth: 1,
     borderColor: "#E4E9EF",
   },
-  approveLabel: { fontSize: 15, fontWeight: "700", color: TEXT_PRIMARY },
-  approveHint: { fontSize: 12.5, color: TEXT_SECONDARY, marginTop: 2 },
+  searchInput: { flex: 1, fontSize: 14, color: TEXT_PRIMARY, padding: 0 },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 12,
+  },
+  filterLabel: { flex: 1, fontSize: 13.5, color: TEXT_PRIMARY },
+  totalText: { fontSize: 13, color: TEXT_SECONDARY, marginTop: 8 },
+  studentCard: {
+    flexDirection: "row",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+    borderWidth: 1.5,
+  },
+  cardHadir: { borderColor: "rgba(27,127,77,0.35)", backgroundColor: "#F1FAF4" },
+  cardAbsent: { borderColor: "rgba(192,57,43,0.30)", backgroundColor: "#FDF2F2" },
+  cardPhoto: { width: 54, height: 54, borderRadius: 27, backgroundColor: "#E4E9EF" },
+  cardPhotoEmpty: { alignItems: "center", justifyContent: "center" },
+  studentAvatarText: { color: ACCENT, fontSize: 17, fontWeight: "700" },
+  cardName: { fontSize: 15.5, fontWeight: "800", color: TEXT_PRIMARY },
+  cardMeta: { fontSize: 12.5, color: TEXT_SECONDARY, marginTop: 1 },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  badgeHadir: { backgroundColor: "rgba(27,127,77,0.12)" },
+  badgeAbsent: { backgroundColor: "rgba(192,57,43,0.12)" },
+  badgeText: { fontSize: 12.5, fontWeight: "700" },
+  closeBtn: {
+    backgroundColor: "#C0392B",
+    borderRadius: 24,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  closeText: { color: "#FFF", fontWeight: "800", letterSpacing: 0.5 },
   logoutButton: {
     position: "absolute",
     left: 16,
