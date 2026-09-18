@@ -159,6 +159,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const [error, setError] = useState<string | null>(null);
 
   const now = new Date();
+  const todayKey = now.toISOString().slice(0, 10);
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
 
@@ -465,22 +466,24 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
               <View style={styles.grid}>
                 {calendarCells.map((d, i) => {
                   if (d === null)
-                    return <View key={`e${i}`} style={styles.cell} />;
+                    return <View key={`e${i}`} style={styles.dayCell} />;
                   const key = dateKey(viewYear, viewMonth, d);
                   const fill = dayFill[key];
+                  const isToday = key === todayKey;
                   return (
                     <TouchableOpacity
                       key={key}
-                      style={styles.cell}
+                      style={styles.dayCell}
                       activeOpacity={fill ? 0.6 : 1}
                       onPress={() => fill && openDate(key)}
                     >
                       <View
                         style={[
-                          styles.dayDot,
+                          styles.dayCircle,
                           fill === "all" && styles.dayAll,
                           fill === "some" && styles.daySome,
                           fill === "none" && styles.dayNone,
+                          isToday && styles.dayToday,
                         ]}
                       >
                         <Text style={styles.dayText}>{d}</Text>
@@ -491,9 +494,10 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
               </View>
 
               <View style={styles.legend}>
-                <Legend color="#99B9F7" label="Hadir semua" />
-                <Legend color="#F5D95E" label="Sebagian" />
-                <Legend color="#F7CCCE" label="Tidak ada" />
+                <Legend color="#AFC9F2" label="Hadir semua" />
+                <Legend color="#F5DC94" label="Sebagian" />
+                <Legend color="#F6C6C6" label="Tidak ada" />
+                <Legend color="#A6E3B8" label="Hari ini" />
               </View>
             </View>
 
@@ -810,26 +814,25 @@ const styles = StyleSheet.create({
   },
   weekdayEnd: { color: "#C0392B" },
   grid: { flexDirection: "row", flexWrap: "wrap" },
-  cell: {
-    width: `${100 / 7}%`,
+  dayCell: {
+    width: "14%",
     aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 3,
+    marginVertical: 4,
   },
-  dayDot: {
-    width: "100%",
-    height: "100%",
+  dayCircle: {
+    width: "78%",
+    height: "78%",
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    maxWidth: 44,
-    maxHeight: 44,
   },
-  dayAll: { backgroundColor: "#99B9F7" },
-  daySome: { backgroundColor: "#F5D95E" },
-  dayNone: { backgroundColor: "#F7CCCE" },
-  dayText: { fontSize: 14, fontWeight: "600", color: "#1C1C1E" },
+  dayAll: { backgroundColor: "#AFC9F2" },
+  daySome: { backgroundColor: "#F5DC94" },
+  dayNone: { backgroundColor: "#F6C6C6" },
+  dayToday: { backgroundColor: "#A6E3B8" },
+  dayText: { fontSize: 14, fontWeight: "500", color: "#1C1C1E" },
   legend: {
     flexDirection: "row",
     justifyContent: "space-around",

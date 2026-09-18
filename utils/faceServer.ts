@@ -33,7 +33,6 @@ import { DEMO_TOKEN } from "./demoMode";
 const PATH_FETCH = "/api/face-data";
 const PATH_SAVE = "/api/simpan-face-data";
 const PATH_RESET = "/api/reset-wajah";
-const PATH_RESET_SAVE = "/api/simpan-reset";
 const PATH_RESET_COUNT = "/api/jumlah-reset";
 const PATH_RESET_MAX = "/api/max-reset";
 
@@ -226,9 +225,9 @@ export async function requestServerReset(
   if (!isUsableSession(id, token)) {
     throw new Error("Sesi tidak tersedia untuk reset wajah.");
   }
-  // Dua langkah, mengikuti app resmi: hapus wajah terdaftar (reset-wajah),
-  // lalu catat pemakaian jatah reset (simpan-reset). Keduanya dikunci
-  // pengguna_id. Tanpa simpan-reset, hitungan jatah di server tidak bertambah.
+  // HANYA reset-wajah - endpoint ini SUDAH menaikkan hitungan jatah di server
+  // (app resmi pun cuma memanggil postResetWajah, lalu updateResetById lokal).
+  // Sebelumnya kita juga memanggil simpan-reset, sehingga satu reset dihitung
+  // DUA kali (jatah 2 langsung habis dalam sekali tekan) - itu bug-nya.
   await apiPostForm<unknown>(PATH_RESET, token!, { pengguna_id: id! });
-  await apiPostForm<unknown>(PATH_RESET_SAVE, token!, { pengguna_id: id! });
 }
