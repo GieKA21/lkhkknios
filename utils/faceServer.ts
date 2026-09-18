@@ -33,8 +33,19 @@ import { DEMO_TOKEN } from "./demoMode";
 const PATH_FETCH = "/api/face-data";
 const PATH_SAVE = "/api/simpan-face-data";
 const PATH_RESET = "/api/reset-wajah";
+const PATH_RESET_SAVE = "/api/simpan-reset";
 const PATH_RESET_COUNT = "/api/jumlah-reset";
 const PATH_RESET_MAX = "/api/max-reset";
+
+// NAMA FIELD BERBEDA PER ENDPOINT - dipastikan dari source Flutter resmi:
+//   /api/face-data, /api/simpan-face-data  -> field "id"
+//   /api/reset-wajah, /api/simpan-reset,
+//   /api/jumlah-reset                       -> field "pengguna_id"
+//   /api/max-reset                          -> TANPA parameter apa pun
+// Nilai keduanya sama (id numerik peserta), hanya nama fieldnya beda. Dulu
+// seluruh endpoint reset keliru dikirim "id", sehingga server menolaknya dan
+// aplikasi jatuh ke cache lokal - itulah sebab kuota reset "tidak berubah"
+// walau sudah diedit di database.
 
 /** Nama field payload wajah. Satu-satunya kandidat yang muncul di libapp.so. */
 const FIELD_FACE_DATA = "face_data";
@@ -145,8 +156,10 @@ export async function fetchServerResetInfo(
 ): Promise<ServerResetInfo | null> {
   if (!isUsableSession(id, token)) return null;
   const [countRaw, maxRaw] = await Promise.all([
-    apiGet<unknown>(PATH_RESET_COUNT, token!, { id: id! }),
-    apiGet<unknown>(PATH_RESET_MAX, token!, { id: id! }),
+    // jumlah-reset dikunci pengguna_id; max-reset TANPA parameter (nilainya
+    // sama untuk semua peserta).
+    apiGet<unknown>(PATH_RESET_COUNT, token!, { pengguna_id: id! }),
+    apiGet<unknown>(PATH_RESET_MAX, token!),
   ]);
 
   const num = (payload: unknown, ...keys: string[]): number | null => {
@@ -178,5 +191,9 @@ export async function requestServerReset(
   if (!isUsableSession(id, token)) {
     throw new Error("Sesi tidak tersedia untuk reset wajah.");
   }
-  await apiPostForm<unknown>(PATH_RESET, token!, { id: id! });
+  // Dua langkah, mengikuti app resmi: hapus wajah terdaftar (reset-wajah),
+  // lalu catat pemakaian jatah reset (simpan-reset). Keduanya dikunci
+  // pengguna_id. Tanpa simpan-reset, hitungan jatah di server tidak bertambah.
+  await apiPostForm<unknown>(PATH_RESET, token!, { pengguna_id: id! });
+  await apiPostForm<unknown>(PATH_RESET_SAVE, token!, { pengguna_id: id! });
 }

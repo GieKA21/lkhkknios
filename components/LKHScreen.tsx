@@ -63,6 +63,13 @@ interface LKHRecord {
   kode?: string;
   /** "latitude,longitude" saat foto diambil, dikirim saat sinkron. */
   koordinat?: string;
+  /** Program/kegiatan KKN yang dilaporkan. Server /api/simpan-lkh
+   * mewajibkannya, tetapi UI presensi ini belum mengumpulkannya - lihat
+   * catatan di syncOneRecord. */
+  programId?: string | number;
+  /** Deskripsi kegiatan harian. Sama seperti programId: diwajibkan server,
+   * belum dikumpulkan UI. */
+  deskripsi?: string;
   /** True kalau diambil selagi Mode Demo aktif - dikecualikan dari sinkron
    * ke server asli (lihat handleSync) supaya data uji coba tidak pernah
    * terkirim sebagai laporan KKN sungguhan. */
@@ -669,17 +676,32 @@ export default function LKHScreen() {
   const SIMPAN_LKH_URL = `${API_BASE}/api/simpan-lkh`;
 
   const syncOneRecord = async (
-    nim: string,
+    penggunaId: string,
     authToken: string,
     record: LKHRecord,
   ): Promise<{ ok: boolean; message?: string }> => {
     if (!record.photoUri) return { ok: false, message: "Tidak ada foto tersimpan." };
+    if (!penggunaId) {
+      return {
+        ok: false,
+        message: "ID peserta tidak ditemukan. Silakan login ulang.",
+      };
+    }
 
     const formData = new FormData();
-    formData.append("nim", nim);
+    // Server /api/simpan-lkh mengunci record dengan pengguna_id NUMERIK
+    // (dipastikan dari source Flutter: postSimpanLkh(penggunaId, programId,
+    // kode, deskripsi, ...)), BUKAN nim - dulu keliru mengirim nim.
+    formData.append("pengguna_id", penggunaId);
     formData.append("kode", record.kode || generateLocalRecordCode());
     formData.append("waktu", record.date);
     formData.append("koordinat", record.koordinat || "");
+    // program_id & deskripsi WAJIB menurut server. Aplikasi ini (presensi)
+    // belum mengumpulkan keduanya - untuk sementara dikirim dari record bila
+    // ada, atau kosong. Selama program_id kosong, server kemungkinan tetap
+    // menolak; pengumpulan program+deskripsi adalah fitur yang belum ada.
+    formData.append("program_id", record.programId ? String(record.programId) : "");
+    formData.append("deskripsi", record.deskripsi || "");
     formData.append("device_info", getDeviceInfoStr());
     formData.append("version", APP_VERSION);
     // React Native's FormData accepts this {uri,name,type} file shape (not
@@ -718,9 +740,12 @@ export default function LKHScreen() {
     setIsSyncing(true);
     try {
       const currentToken = await AsyncStorage.getItem("@user_token");
-      const nim = await AsyncStorage.getItem("@user_nim");
-      if (!currentToken || !nim) {
-        Alert.alert("Gagal", "Sesi login tidak ditemukan, silakan login ulang.");
+      const penggunaId = await AsyncStorage.getItem("@user_id");
+      if (!currentToken || !penggunaId) {
+        Alert.alert(
+          "Gagal",
+          "Sesi login tidak lengkap (ID peserta tidak ada). Silakan login ulang.",
+        );
         return;
       }
 
@@ -741,7 +766,7 @@ export default function LKHScreen() {
         }
 
         try {
-          const result = await syncOneRecord(nim, currentToken, record);
+          const result = await syncOneRecord(penggunaId, currentToken, record);
           if (result.ok) {
             updatedRecords[key] = { ...record, status: "synced" };
             countSync++;
