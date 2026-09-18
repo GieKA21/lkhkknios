@@ -145,11 +145,16 @@ export default function LoginScreen({ onLoginSuccess }) {
               settingTanggalMulai: data.wilayahKec?.setting?.tanggal_mulai || null,
               settingTanggalSelesai:
                 data.wilayahKec?.setting?.tanggal_selesai || null,
-              // ID numerik angkatan & kelurahan - dibutuhkan saat MEMBUAT
+              // ID numerik angkatan & wilayah - dibutuhkan saat MEMBUAT
               // program default untuk presensi (server /api/simpan-program
               // meminta angkatan_id + wilayah_id). Lihat utils/presensiProgram.ts.
+              // Wilayah: sebagian akun diset di level KELURAHAN (wilayahKel),
+              // sebagian hanya KECAMATAN (wilayahKec, kolom pengguna.
+              // wilayah_id_kec) - pakai kelurahan bila ada, jika tidak
+              // kecamatan. Tanpa fallback ini wilayahId kosong untuk akun
+              // yang hanya punya kecamatan.
               angkatanId: data.angkatan?.id ?? null,
-              wilayahId: data.wilayahKel?.id ?? null,
+              wilayahId: data.wilayahKel?.id ?? data.wilayahKec?.id ?? null,
             };
 
             await AsyncStorage.setItem(

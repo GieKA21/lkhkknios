@@ -80,6 +80,23 @@ function firstProgramId(list: unknown): string | null {
  * bisa dihubungi - pemanggil (sinkron) memperlakukannya sebagai kegagalan
  * yang pesannya ditampilkan apa adanya.
  */
+/**
+ * Ambil id program pertama peserta. MENELAN error (mis. /api/program crash di
+ * server saat peserta belum punya program) dan mengembalikan null, supaya
+ * pemanggil bisa lanjut mencoba MEMBUAT program alih-alih berhenti.
+ */
+async function tryFetchFirstProgram(
+  nim: string,
+  token: string,
+): Promise<string | null> {
+  try {
+    const list = await apiGet<unknown>(PATH_PROGRAM, token, { nim });
+    return firstProgramId(list);
+  } catch {
+    return null;
+  }
+}
+
 export async function ensurePresensiProgramId(token: string): Promise<string> {
   // 1. Cache lokal.
   const cached = await AsyncStorage.getItem(PROGRAM_ID_KEY);
@@ -88,18 +105,22 @@ export async function ensurePresensiProgramId(token: string): Promise<string> {
   const ids = await readProfileIds();
   if (!ids.nim) throw new Error("Sesi tidak lengkap (nim tidak ada).");
 
-  // 2. Sudah punya program di server?
-  const existing = await apiGet<unknown>(PATH_PROGRAM, token, { nim: ids.nim });
-  let programId = firstProgramId(existing);
+  // 2. Sudah punya program? (menelan error - lihat tryFetchFirstProgram)
+  let programId = await tryFetchFirstProgram(ids.nim, token);
 
-  // 3. Belum ada - buat satu program default.
+  // 3. Belum ada / GET gagal - buat satu program default lalu ambil ulang.
   if (!programId) {
     if (ids.penggunaId == null || ids.angkatanId == null || ids.wilayahId == null) {
       throw new Error(
-        "Data peserta belum lengkap untuk membuat program presensi. Login ulang.",
+        "Data peserta belum lengkap untuk membuat program presensi " +
+          `(pengguna_id=${ids.penggunaId ?? "?"}, angkatan_id=${ids.angkatanId ?? "?"}, ` +
+          `wilayah_id=${ids.wilayahId ?? "?"}). Coba logout lalu login lagi.`,
       );
     }
     const today = new Date().toISOString().slice(0, 10);
+    // POST simpan-program. Kalau server membalas HTML (crash), error-nya
+    // dilempar apa adanya ke pengguna - itu berarti endpoint program memang
+    // bermasalah, bukan sekadar "belum ada program".
     await apiPostForm<unknown>(PATH_SIMPAN_PROGRAM, token, {
       kode_program: `PRESENSI-${ids.penggunaId}`,
       nama_program: DEFAULT_NAMA,
@@ -111,10 +132,12 @@ export async function ensurePresensiProgramId(token: string): Promise<string> {
       tanggal_selesai: ids.tanggalSelesai || today,
     });
     // Ambil ulang untuk memperoleh id yang diberikan server.
-    const after = await apiGet<unknown>(PATH_PROGRAM, token, { nim: ids.nim });
-    programId = firstProgramId(after);
+    programId = await tryFetchFirstProgram(ids.nim, token);
     if (!programId) {
-      throw new Error("Program presensi gagal dibuat di server.");
+      throw new Error(
+        "Program presensi terkirim tapi tidak bisa dibaca kembali - " +
+          "endpoint /api/program kemungkinan bermasalah di server.",
+      );
     }
   }
 
