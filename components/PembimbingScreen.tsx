@@ -117,18 +117,33 @@ function parseHadir(list: unknown): Record<string, boolean> {
   return map;
 }
 
-/** Parse /api/pembimbing-tanggal menjadi peta tanggal -> tingkat kehadiran. */
-function parseDays(list: unknown): Record<string, DayFill> {
+/**
+ * Parse /api/pembimbing-tanggal menjadi peta tanggal -> tingkat kehadiran.
+ * Bentuk asli (dipastikan dari respons live):
+ *   { total_peserta: 101, list_tanggal: [ {waktu, total}, ... ] }
+ * `total` per tanggal = jumlah mahasiswa yang MENGISI hari itu;
+ * `total_peserta` = jumlah seluruh mahasiswa. Warna: semua isi -> "all",
+ * sebagian -> "some", tidak ada -> "none".
+ */
+function parseDays(payload: unknown): Record<string, DayFill> {
   const map: Record<string, DayFill> = {};
-  if (!Array.isArray(list)) return map;
+  const totalPeserta = num(get(payload, "total_peserta"));
+  const listRaw = get(payload, "list_tanggal");
+  const list = Array.isArray(listRaw)
+    ? listRaw
+    : Array.isArray(payload)
+      ? payload
+      : [];
   for (const item of list) {
     const waktu = get(item, "waktu");
     if (waktu == null) continue;
     const key = String(waktu).slice(0, 10);
-    const filled = num(get(item, "checked"));
-    const total = num(get(item, "total"));
+    const filled = num(get(item, "total")); // jumlah yang mengisi
+    const denom = Number.isFinite(totalPeserta)
+      ? totalPeserta
+      : num(get(item, "total_peserta"));
     map[key] =
-      total > 0 && filled >= total ? "all" : filled > 0 ? "some" : "none";
+      denom > 0 && filled >= denom ? "all" : filled > 0 ? "some" : "none";
   }
   return map;
 }

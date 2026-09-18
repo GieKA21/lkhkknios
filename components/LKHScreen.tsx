@@ -879,6 +879,12 @@ export default function LKHScreen() {
   // sedang memproses). Tanpa ini foto/layar statis bisa langsung dijepret.
   const captureDisabled = isProcessingFace || !liveness.passed;
 
+  // Sudah absen hari ini? (ada catatan berfoto untuk tanggal ini). Kalau ya,
+  // tombol "Ambil Foto Absensi" dinonaktifkan & jadi abu-abu - satu hari satu
+  // absen. Mode demo dikecualikan supaya tetap bisa diuji berulang.
+  const alreadyAttendedToday =
+    !demoModeActive && !!records[toDateKey(new Date())]?.photoUri;
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -955,23 +961,30 @@ export default function LKHScreen() {
             <TouchableOpacity
               style={[
                 styles.attendanceButton,
-                isCheckingLocation && styles.attendanceButtonDisabled,
+                (isCheckingLocation || alreadyAttendedToday) &&
+                  styles.attendanceButtonDisabled,
               ]}
               onPress={handleOpenAttendanceCamera}
               activeOpacity={0.85}
-              disabled={isCheckingLocation}
+              disabled={isCheckingLocation || alreadyAttendedToday}
             >
               {isCheckingLocation ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
-                <FontAwesome5 name="camera" size={16} color="#FFF" />
+                <FontAwesome5
+                  name={alreadyAttendedToday ? "check-circle" : "camera"}
+                  size={16}
+                  color="#FFF"
+                />
               )}
               <Text style={styles.attendanceButtonText}>
                 {isCheckingLocation
                   ? "Memeriksa lokasi..."
-                  : hasEnrollment
-                    ? "Ambil Foto Absensi"
-                    : "Daftarkan Wajah (Langkah Pertama)"}
+                  : alreadyAttendedToday
+                    ? "Sudah Absen Hari Ini"
+                    : hasEnrollment
+                      ? "Ambil Foto Absensi"
+                      : "Daftarkan Wajah (Langkah Pertama)"}
               </Text>
             </TouchableOpacity>
             <Text style={styles.attendanceHint}>
