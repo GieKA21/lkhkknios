@@ -277,15 +277,19 @@ export default function LoginScreen({ onLoginSuccess }) {
       await AsyncStorage.setItem("@user_nim", nim);
       await AsyncStorage.setItem("@user_role", "pembimbing");
 
-      // Profil pembimbing: /api/pembimbing mengembalikan id/kode/nama/pegFoto.
+      // Profil pembimbing: /api/pembimbing mengembalikan id/kode/nama/pegFoto
+      // + pegTglLahir, angkatan, peran, prodi.fakultas (lihat ProfilDosenScreen).
       try {
         const p = await fetchPembimbing(nim, result.token);
         const profile = {
           nip: p.kode ?? nim,
           nama: p.nama ?? "Pembimbing",
           foto: p.pegFoto ?? p.foto ?? "",
+          tglLahir: p.pegTglLahir ?? "",
           prodi: p.prodi?.nama ?? "",
           fakultas: p.prodi?.fakultas?.nama ?? "",
+          angkatan: p.angkatan?.nama_angkatan?.toString() ?? "",
+          peran: p.peran?.nama ?? "Dosen Pembimbing",
         };
         await AsyncStorage.setItem("@user_profile", JSON.stringify(profile));
         if (p.id != null) await AsyncStorage.setItem("@user_id", String(p.id));

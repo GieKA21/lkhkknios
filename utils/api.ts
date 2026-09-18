@@ -161,6 +161,11 @@ export function profilePhotoUrl(fotoName: string): string {
   return `${API_BASE}/api/profil-peserta?profil=${fotoName}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
 }
 
+/** Foto profil DOSEN pembimbing (/api/profil-pembimbing?profil=pegFoto). */
+export function pembimbingPhotoUrl(fotoName: string): string {
+  return `${API_BASE}/api/profil-pembimbing?profil=${fotoName}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
+}
+
 /**
  * Header untuk <Image source={{ uri, headers }}>. Selama foto belum
  * terunduh ke lokal, URI-nya masih menunjuk endpoint yang butuh token -

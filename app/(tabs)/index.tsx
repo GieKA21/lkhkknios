@@ -15,6 +15,7 @@ import {
 import LKHScreen from "../../components/LKHScreen";
 import LoginScreen from "../../components/LoginScreen";
 import PembimbingScreen from "../../components/PembimbingScreen";
+import ProfilDosenScreen from "../../components/ProfilDosenScreen";
 import ProfileScreen from "../../components/ProfileScreen";
 
 export default function Index() {
@@ -62,26 +63,23 @@ export default function Index() {
     );
   }
 
-  // Pembimbing: dashboard sendiri, tanpa tab bar peserta.
-  if (role === "pembimbing") {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar style="dark" />
-        <View style={styles.content}>
-          <PembimbingScreen onLogout={refreshAuth} />
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const isPembimbing = role === "pembimbing";
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
 
-      {/* Konten Berdasarkan Tab Aktif */}
+      {/* Konten Berdasarkan Tab Aktif + peran. Peserta: LKH/Profil peserta;
+          pembimbing: kalender kehadiran/Profil dosen. */}
       <View style={styles.content}>
         {currentTab === "lkh" ? (
-          <LKHScreen />
+          isPembimbing ? (
+            <PembimbingScreen onLogout={refreshAuth} />
+          ) : (
+            <LKHScreen />
+          )
+        ) : isPembimbing ? (
+          <ProfilDosenScreen onLogout={refreshAuth} />
         ) : (
           <ProfileScreen onLogout={() => setIsLoggedIn(false)} />
         )}

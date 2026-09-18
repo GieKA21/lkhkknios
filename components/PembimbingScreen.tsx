@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
-import Constants from "expo-constants";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -332,27 +331,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     }
   };
 
-  const confirmLogout = () => {
-    Alert.alert("Konfirmasi", "Yakin ingin keluar akun?", [
-      { text: "Batal", style: "cancel" },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          await AsyncStorage.multiRemove([
-            "@user_token",
-            "@user_nim",
-            "@user_id",
-            "@user_profile",
-            "@user_role",
-            "@demo_mode",
-            "@presensi_program_id",
-          ]);
-          onLogout();
-        },
-      },
-    ]);
-  };
 
   // ---- Kalender ----
   const calendarCells = useMemo(() => {
@@ -717,20 +695,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
           </View>
         </View>
       </Modal>
-
-      <TouchableOpacity
-        style={styles.logoutButton}
-        onPress={confirmLogout}
-        activeOpacity={0.85}
-      >
-        <Ionicons name="log-out-outline" size={20} color="#FFF" />
-        <Text style={styles.logoutText}>LOGOUT</Text>
-      </TouchableOpacity>
-
-      <Text style={styles.versionText}>
-        Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-        {Constants.expoConfig?.ios?.buildNumber ?? "?"})
-      </Text>
     </SafeAreaView>
   );
 }
