@@ -15,6 +15,8 @@ import {
 } from "react-native";
 import { DEMO_TOKEN } from "../utils/demoMode";
 import {
+  fetchPembimbingDates,
+  fetchSupervisedLkh,
   fetchSupervisedStudents,
   type SupervisedStudent,
 } from "../utils/pembimbingApi";
@@ -115,6 +117,48 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     }
   };
 
+  // DIAGNOSTIK sementara (P3): tampilkan respons MENTAH endpoint LKH dosen,
+  // supaya bentuk datanya terlihat sebelum UI tinjau/setujui dibangun - sama
+  // seperti cara kita memastikan bentuk simpan_lkh sebelum menebak. Hapus
+  // setelah P3 selesai.
+  const showLkhDebug = async () => {
+    try {
+      const [token, id, savedNip] = await Promise.all([
+        AsyncStorage.getItem("@user_token"),
+        AsyncStorage.getItem("@user_id"),
+        AsyncStorage.getItem("@user_nim"),
+      ]);
+      if (!token || !savedNip) {
+        Alert.alert("Debug", "Sesi tidak lengkap.");
+        return;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const cut = (v: unknown) => {
+        const s = JSON.stringify(v);
+        return s.length > 900 ? s.slice(0, 900) + "…(dipotong)" : s;
+      };
+      let datesStr = "(-)";
+      let lkhStr = "(-)";
+      try {
+        datesStr = cut(id ? await fetchPembimbingDates(id, token) : "tanpa @user_id");
+      } catch (e) {
+        datesStr = `ERROR ${e instanceof Error ? e.message : String(e)}`;
+      }
+      try {
+        lkhStr = cut(await fetchSupervisedLkh(savedNip, today, token));
+      } catch (e) {
+        lkhStr = `ERROR ${e instanceof Error ? e.message : String(e)}`;
+      }
+      Alert.alert(
+        "Debug LKH Dosen",
+        `NIP: ${savedNip}\npengguna_id: ${id ?? "(kosong)"}\ntanggal: ${today}\n\n` +
+          `[pembimbing-tanggal]\n${datesStr}\n\n[peserta-bimbing-lkh]\n${lkhStr}`,
+      );
+    } catch (e) {
+      Alert.alert("Debug", String(e));
+    }
+  };
+
   const confirmLogout = () => {
     Alert.alert("Konfirmasi", "Yakin ingin keluar akun?", [
       { text: "Batal", style: "cancel" },
@@ -162,6 +206,12 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
 
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Mahasiswa Bimbingan</Text>
+          {!isDemo && (
+            <TouchableOpacity onPress={showLkhDebug} style={styles.debugBtn}>
+              <Ionicons name="bug-outline" size={16} color={ACCENT} />
+              <Text style={styles.debugText}>Debug LKH</Text>
+            </TouchableOpacity>
+          )}
           {!loading && (
             <Text style={styles.countPill}>{students.length}</Text>
           )}
@@ -343,6 +393,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
   },
+  debugBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginRight: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: "rgba(14,120,61,0.10)",
+  },
+  debugText: { fontSize: 11, fontWeight: "600", color: ACCENT },
   listCard: {
     backgroundColor: "rgba(255,255,255,0.45)",
     borderRadius: 24,
