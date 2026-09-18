@@ -101,17 +101,25 @@ async function unwrap<T>(response: Response): Promise<T> {
     );
   }
 
-  // Server ini memakai LEBIH DARI SATU kode sukses di amplop: 200 dan 207
-  // (desc "Berhasil"). Terbukti dari /api/max-reset yang membalas
-  // {statusCode:207,desc:"Berhasil",...} dan /api/versi yang gate-nya == 207
-  // di source Flutter. Kalau hanya 200 yang diterima, endpoint ber-207 keliru
-  // dianggap gagal - itulah sebab jatah reset "tidak berubah": max-reset
-  // dilempar sebagai error sehingga seluruh pembacaan jatuh ke cache lokal.
-  const SUCCESS_STATUS = [200, 207];
+  // Kode sukses di amplop server ini TIDAK konsisten: ada 200, 207, dan
+  // kemungkinan kode 2xx lain, semuanya bertanda desc "Berhasil" (max-reset
+  // terbukti membalas "Berhasil" dengan kode selain 200/207). App resmi
+  // (Flutter) bahkan tidak memeriksa statusCode sama sekali - ia hanya
+  // memakai validateStatus: status < 500 lalu membaca data. Jadi anggap
+  // sukses bila: HTTP-nya ok DAN (statusCode kosong, ATAU 2xx apa pun -
+  // termasuk yang datang sebagai string, ATAU desc-nya "Berhasil").
+  const codeNum =
+    typeof parsed.statusCode === "string"
+      ? Number(parsed.statusCode)
+      : parsed.statusCode;
+  const descBerhasil =
+    typeof parsed.desc === "string" &&
+    parsed.desc.trim().toLowerCase() === "berhasil";
   const ok =
     response.ok &&
     (parsed.statusCode === undefined ||
-      SUCCESS_STATUS.includes(parsed.statusCode));
+      (typeof codeNum === "number" && codeNum >= 200 && codeNum < 300) ||
+      descBerhasil);
   if (!ok) {
     throw new ApiError(
       parsed.desc || parsed.message || `HTTP ${response.status}`,
