@@ -235,6 +235,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const openDate = useCallback(
     async (date: string) => {
       setModalDate(date);
+      setRiwayatOf(null);
       setSearch("");
       setOnlyAbsent(false);
       setHadir({});
@@ -508,144 +509,31 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         )}
       </ScrollView>
 
-      {/* Modal daftar kehadiran per tanggal */}
+      {/* Satu modal saja: menampilkan DAFTAR kehadiran, atau RIWAYAT satu
+          mahasiswa. Keduanya TIDAK ditumpuk sebagai dua <Modal> - menumpuk
+          modal transparan di iOS membuat sentuhan macet setelah ditutup. */}
       <Modal
         visible={!!modalDate}
         animationType="slide"
         transparent
-        onRequestClose={() => setModalDate(null)}
+        onRequestClose={() => {
+          if (riwayatOf) setRiwayatOf(null);
+          else setModalDate(null);
+        }}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              {modalDate ? prettyDate(modalDate) : ""}
-            </Text>
-
-            <View style={styles.searchBox}>
-              <Ionicons name="search" size={16} color="#8E8E93" />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Cari nama, NIM, prodi, kecamatan"
-                placeholderTextColor="#9AA3AD"
-                value={search}
-                onChangeText={setSearch}
-              />
-            </View>
-
-            <View style={styles.filterRow}>
-              <Text style={styles.filterLabel}>
-                Tampilkan hanya yang tidak mengisi
-              </Text>
-              <Switch
-                value={onlyAbsent}
-                onValueChange={setOnlyAbsent}
-                trackColor={{ false: "#CFD6DD", true: "#E9A8AB" }}
-                thumbColor={onlyAbsent ? "#C0392B" : "#F4F4F4"}
-              />
-            </View>
-            <Text style={styles.totalText}>
-              {hadirLoading
-                ? "Memuat kehadiran..."
-                : `Total tampil: ${filteredStudents.length}`}
-            </Text>
-
-            <ScrollView style={{ marginTop: 8 }}>
-              {filteredStudents.map((s, i) => {
-                const isHadir = !!hadir[s.kode];
-                return (
-                  <View
-                    key={s.id ?? s.kode ?? i}
-                    style={[
-                      styles.studentCard,
-                      isHadir ? styles.cardHadir : styles.cardAbsent,
-                    ]}
-                  >
-                    {s.foto ? (
-                      <Image
-                        source={{
-                          uri: profilePhotoUrl(s.foto),
-                          headers: profilePhotoHeaders(tokenRef.current || ""),
-                        }}
-                        style={styles.cardPhoto}
-                      />
-                    ) : (
-                      <View style={[styles.cardPhoto, styles.cardPhotoEmpty]}>
-                        <Text style={styles.studentAvatarText}>
-                          {initials(s.nama)}
-                        </Text>
-                      </View>
-                    )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.cardName} numberOfLines={1}>
-                        {s.nama}
-                      </Text>
-                      <Text style={styles.cardMeta}>NIM: {s.kode}</Text>
-                      {!!s.prodi && (
-                        <Text style={styles.cardMeta} numberOfLines={1}>
-                          {s.prodi}
-                        </Text>
-                      )}
-                      {!!s.kecamatan && (
-                        <Text style={styles.cardMeta}>{s.kecamatan}</Text>
-                      )}
-                      <View style={styles.cardActions}>
-                        <View
-                          style={[
-                            styles.badge,
-                            isHadir ? styles.badgeHadir : styles.badgeAbsent,
-                          ]}
-                        >
-                          <Ionicons
-                            name={isHadir ? "checkmark-circle" : "close-circle"}
-                            size={14}
-                            color={isHadir ? "#1B7F4D" : "#C0392B"}
-                          />
-                          <Text
-                            style={[
-                              styles.badgeText,
-                              { color: isHadir ? "#1B7F4D" : "#C0392B" },
-                            ]}
-                          >
-                            {isHadir ? "Hadir" : "Tidak mengisi"}
-                          </Text>
-                        </View>
-                        <TouchableOpacity
-                          style={styles.riwayatBtn}
-                          onPress={() => openRiwayat(s)}
-                        >
-                          <Ionicons name="time-outline" size={14} color={ACCENT} />
-                          <Text style={styles.riwayatBtnText}>Riwayat</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                );
-              })}
-              <View style={{ height: 8 }} />
-            </ScrollView>
-
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => setModalDate(null)}
-            >
-              <Text style={styles.closeText}>Tutup</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal riwayat kehadiran per mahasiswa */}
-      <Modal
-        visible={!!riwayatOf}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setRiwayatOf(null)}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Riwayat Kehadiran</Text>
-            {riwayatOf && (
+            {riwayatOf ? (
+              // ---- Tampilan RIWAYAT ----
               <>
+                <TouchableOpacity
+                  style={styles.backRow}
+                  onPress={() => setRiwayatOf(null)}
+                >
+                  <Ionicons name="chevron-back" size={20} color={ACCENT} />
+                  <Text style={styles.backText}>Kembali</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle}>Riwayat Kehadiran</Text>
                 <Text style={styles.riwayatName}>{riwayatOf.nama}</Text>
                 <Text style={styles.riwayatNim}>NIM: {riwayatOf.kode}</Text>
                 {riwayat.length > 0 && (
@@ -674,7 +562,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
                   <ScrollView style={{ marginTop: 4 }}>
                     {riwayat.length === 0 && (
                       <Text style={styles.centerText}>
-                        Belum ada data periode. Pastikan kalender sudah termuat.
+                        Belum ada data periode untuk mahasiswa ini.
                       </Text>
                     )}
                     {riwayat.map((r) => (
@@ -703,14 +591,141 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
                     <View style={{ height: 8 }} />
                   </ScrollView>
                 )}
+                <TouchableOpacity
+                  style={styles.closeBtn}
+                  onPress={() => setRiwayatOf(null)}
+                >
+                  <Text style={styles.closeText}>Kembali ke Daftar</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              // ---- Tampilan DAFTAR kehadiran ----
+              <>
+                <Text style={styles.modalTitle}>
+                  {modalDate ? prettyDate(modalDate) : ""}
+                </Text>
+
+                <View style={styles.searchBox}>
+                  <Ionicons name="search" size={16} color="#8E8E93" />
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Cari nama, NIM, prodi, kecamatan"
+                    placeholderTextColor="#9AA3AD"
+                    value={search}
+                    onChangeText={setSearch}
+                  />
+                </View>
+
+                <View style={styles.filterRow}>
+                  <Text style={styles.filterLabel}>
+                    Tampilkan hanya yang tidak mengisi
+                  </Text>
+                  <Switch
+                    value={onlyAbsent}
+                    onValueChange={setOnlyAbsent}
+                    trackColor={{ false: "#CFD6DD", true: "#E9A8AB" }}
+                    thumbColor={onlyAbsent ? "#C0392B" : "#F4F4F4"}
+                  />
+                </View>
+                <Text style={styles.totalText}>
+                  {hadirLoading
+                    ? "Memuat kehadiran..."
+                    : `Total tampil: ${filteredStudents.length}`}
+                </Text>
+
+                <ScrollView style={{ marginTop: 8 }}>
+                  {filteredStudents.map((s, i) => {
+                    const isHadir = !!hadir[s.kode];
+                    return (
+                      <View
+                        key={s.id ?? s.kode ?? i}
+                        style={[
+                          styles.studentCard,
+                          isHadir ? styles.cardHadir : styles.cardAbsent,
+                        ]}
+                      >
+                        {s.foto ? (
+                          <Image
+                            source={{
+                              uri: profilePhotoUrl(s.foto),
+                              headers: profilePhotoHeaders(
+                                tokenRef.current || "",
+                              ),
+                            }}
+                            style={styles.cardPhoto}
+                          />
+                        ) : (
+                          <View
+                            style={[styles.cardPhoto, styles.cardPhotoEmpty]}
+                          >
+                            <Text style={styles.studentAvatarText}>
+                              {initials(s.nama)}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.cardName} numberOfLines={1}>
+                            {s.nama}
+                          </Text>
+                          <Text style={styles.cardMeta}>NIM: {s.kode}</Text>
+                          {!!s.prodi && (
+                            <Text style={styles.cardMeta} numberOfLines={1}>
+                              {s.prodi}
+                            </Text>
+                          )}
+                          {!!s.kecamatan && (
+                            <Text style={styles.cardMeta}>{s.kecamatan}</Text>
+                          )}
+                          <View style={styles.cardActions}>
+                            <View
+                              style={[
+                                styles.badge,
+                                isHadir ? styles.badgeHadir : styles.badgeAbsent,
+                              ]}
+                            >
+                              <Ionicons
+                                name={
+                                  isHadir ? "checkmark-circle" : "close-circle"
+                                }
+                                size={14}
+                                color={isHadir ? "#1B7F4D" : "#C0392B"}
+                              />
+                              <Text
+                                style={[
+                                  styles.badgeText,
+                                  { color: isHadir ? "#1B7F4D" : "#C0392B" },
+                                ]}
+                              >
+                                {isHadir ? "Hadir" : "Tidak mengisi"}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              style={styles.riwayatBtn}
+                              onPress={() => openRiwayat(s)}
+                            >
+                              <Ionicons
+                                name="time-outline"
+                                size={14}
+                                color={ACCENT}
+                              />
+                              <Text style={styles.riwayatBtnText}>Riwayat</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                  <View style={{ height: 8 }} />
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={styles.closeBtn}
+                  onPress={() => setModalDate(null)}
+                >
+                  <Text style={styles.closeText}>Tutup</Text>
+                </TouchableOpacity>
               </>
             )}
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => setRiwayatOf(null)}
-            >
-              <Text style={styles.closeText}>Tutup</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -959,6 +974,14 @@ const styles = StyleSheet.create({
     borderColor: "rgba(14,120,61,0.35)",
   },
   riwayatBtnText: { fontSize: 12.5, fontWeight: "700", color: ACCENT },
+  backRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    alignSelf: "flex-start",
+    marginBottom: 4,
+  },
+  backText: { fontSize: 14, fontWeight: "700", color: ACCENT },
   riwayatName: {
     fontSize: 16,
     fontWeight: "800",
