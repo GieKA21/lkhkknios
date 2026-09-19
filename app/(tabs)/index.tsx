@@ -201,12 +201,26 @@ const styles = StyleSheet.create({
     height: 44,
     width: "88%",
     borderRadius: 22,
-    // overflow:hidden memaksa Fabric meng-clip ke borderRadius: tanpa ini,
-    // pil aktif yang baru dipilih (mis. saat pindah ke Profil) dirender KOTAK.
-    overflow: "hidden",
+    // TANPA overflow:hidden - SENGAJA. Di Android Fabric, View ber-overflow
+    // "hidden" yang TIDAK punya background (yaitu pil saat NON-AKTIF) gagal
+    // menggambar ulang anak-anaknya setelah transisi aktif->non-aktif: klip
+    // tetap diterapkan tapi ikon+teks tak ikut digambar lagi, jadi tab non-aktif
+    // tampak KOSONG. Latar hijau translucent pil AKTIF tetap membulat sempurna
+    // dari borderRadius saja - Android menggambar background rounded secara
+    // native tanpa perlu overflow:hidden (itu cuma perlu untuk meng-clip ANAK
+    // yang keluar bidang, sedangkan ikon+teks di sini selalu di tengah).
   },
   // Aksen "liquid glass" hijau: bukan hijau solid, tapi kaca tipis
   // berwarna hijau dengan tepi menyala lembut, seperti tetesan cairan.
+  //
+  // TANPA elevation (bayangan Android) - SENGAJA. Di Android New Architecture
+  // (Fabric), View yang punya `elevation` dipromosikan ke layer render sendiri;
+  // saat pil berpindah aktif->non-aktif, elevation dicabut dan view turun ke
+  // layer induk (yang ber-overflow:hidden), tetapi Fabric GAGAL menggambar
+  // ulang anak-anaknya (ikon+teks) sehingga tab non-aktif tampak KOSONG. Cukup
+  // pakai warna latar + border sebagai penanda aktif. Bayangan iOS (shadow*)
+  // tetap dipertahankan - iOS memakai shadow*, bukan elevation, dan tidak kena
+  // bug ini.
   tabPillActive: {
     backgroundColor: "rgba(16,185,129,0.22)",
     borderWidth: 1,
@@ -215,7 +229,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.5,
     shadowRadius: 10,
-    elevation: 4,
   },
   tabText: {
     fontSize: 13,
