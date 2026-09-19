@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BlurView } from "expo-blur";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -394,7 +393,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.glassShadow}>
-          <BlurView intensity={45} tint="light" style={styles.headerCard}>
+          <View style={styles.headerCard}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>{initials(nama)}</Text>
             </View>
@@ -404,7 +403,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
               <Text style={styles.nip}>{nip ? `NIP ${nip}` : "-"}</Text>
               {!!prodi && <Text style={styles.nip}>{prodi}</Text>}
             </View>
-          </BlurView>
+          </View>
         </View>
 
         {isDemo && (
@@ -437,11 +436,11 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
                 >
                   <Ionicons name="chevron-back" size={20} color={ACCENT} />
                 </TouchableOpacity>
-                <TouchableOpacity onLongPress={showDebug} delayLongPress={500}>
+                <View>
                   <Text style={styles.calTitle}>
                     {MONTHS[viewMonth]} {viewYear}
                   </Text>
-                </TouchableOpacity>
+                </View>
                 <TouchableOpacity
                   onPress={() => changeMonth(1)}
                   style={styles.dateArrow}
@@ -761,12 +760,12 @@ const styles = StyleSheet.create({
   headerCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "#FFFFFF",
     padding: 18,
     borderRadius: 24,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
+    borderColor: "#ECEFF3",
   },
   avatar: {
     width: 60,

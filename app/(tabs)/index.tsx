@@ -1,6 +1,5 @@
 import { FontAwesome5, Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BlurView } from "expo-blur";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import {
@@ -85,12 +84,11 @@ export default function Index() {
         )}
       </View>
 
-      {/* Tab bar mengambang ala iOS 26 / Instagram terbaru: kaca buram asli
-          (BlurView, bukan warna solid) supaya benar-benar tembus pandang,
-          dan setiap item mengisi separuh lebar bar + tinggi penuh supaya
-          area sentuhnya besar (tidak mudah salah tindis). */}
+      {/* Tab bar mengambang ala iOS: kartu putih membulat. Dulu BlurView
+          (kaca), tapi di Android BlurView tidak meng-clip ke borderRadius -
+          tab bar malah tampak KOTAK. View solid membulat lebih konsisten. */}
       <View style={styles.tabBarWrap}>
-        <BlurView intensity={95} tint="light" style={styles.tabBar}>
+        <View style={styles.tabBar}>
           <TouchableOpacity
             style={styles.tabItem}
             onPress={() => setCurrentTab("lkh")}
@@ -136,7 +134,7 @@ export default function Index() {
               </Text>
             </View>
           </TouchableOpacity>
-        </BlurView>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -183,8 +181,8 @@ const styles = StyleSheet.create({
     borderRadius: 31,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.4)",
-    backgroundColor: "rgba(255,255,255,0.14)",
+    borderColor: "#ECEFF3",
+    backgroundColor: "#FFFFFF",
   },
   // Area sentuh: separuh lebar bar x tinggi penuh - jauh lebih besar dari
   // ukuran ikon/teksnya sendiri, supaya tidak mudah salah tindis.
@@ -203,6 +201,9 @@ const styles = StyleSheet.create({
     height: 44,
     width: "88%",
     borderRadius: 22,
+    // overflow:hidden memaksa Fabric meng-clip ke borderRadius: tanpa ini,
+    // pil aktif yang baru dipilih (mis. saat pindah ke Profil) dirender KOTAK.
+    overflow: "hidden",
   },
   // Aksen "liquid glass" hijau: bukan hijau solid, tapi kaca tipis
   // berwarna hijau dengan tepi menyala lembut, seperti tetesan cairan.

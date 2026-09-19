@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "lkh-kkn-ios",
+    "name": "LKH KKN",
     "slug": "lkh-kkn-ios",
     "version": "1.1.1",
     "orientation": "portrait",
@@ -18,11 +18,11 @@
       "buildNumber": "1"
     },
     "android": {
+      "package": "com.gieka21.lkhkknios",
+      "permissions": ["android.permission.CAMERA"],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

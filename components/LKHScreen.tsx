@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     Image,
     Modal,
     SafeAreaView,
@@ -49,7 +50,6 @@ import {
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
-import { isDemoModeActive } from "../utils/demoMode";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type LKHStatus = "synced" | "unsynced" | "empty" | "today" | "none";
@@ -70,10 +70,6 @@ interface LKHRecord {
   /** Deskripsi kegiatan harian. Sama seperti programId: diwajibkan server,
    * belum dikumpulkan UI. */
   deskripsi?: string;
-  /** True kalau diambil selagi Mode Demo aktif - dikecualikan dari sinkron
-   * ke server asli (lihat handleSync) supaya data uji coba tidak pernah
-   * terkirim sebagai laporan KKN sungguhan. */
-  isDemo?: boolean;
 }
 
 interface UserData {
@@ -118,12 +114,38 @@ function generateLocalRecordCode(): string {
 }
 
 /**
+ * Inisial 1-2 huruf dari nama, untuk avatar placeholder saat peserta tidak
+ * punya foto profil (server mengirim foto:null) atau fotonya gagal dimuat -
+ * jauh lebih rapi daripada lingkaran abu-abu kosong.
+ */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
  * Jeda minimum antar-pemrosesan frame wajah di thread JS (~9x/detik).
  * Lihat komentar di handleCameraFaces: kamera mengirim frame jauh lebih
  * cepat dari yang dibutuhkan panduan di layar, dan setiap frame yang
  * diproses berarti setState + render ulang.
  */
 const FACE_TICK_MS = 110;
+
+/**
+ * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
+ * New Architecture (Fabric), View ber-width/height persen + borderRadius besar
+ * kadang dirender sebagai kotak-membulat, bukan lingkaran - itulah sebab hari
+ * terisi tampak kotak sementara "hari ini" bulat. Ukuran px + borderRadius
+ * setengahnya menjamin lingkaran sempurna & seragam.
+ *
+ * Perhitungan: lebar grid = lebar layar - padding scroll (16*2) - padding card
+ * (18*2); tiap sel = 1/7 grid; lingkaran ~78% sel (menyisakan jarak antar sel).
+ */
+const DAY_CIRCLE_SIZE = Math.floor(
+  ((Dimensions.get("window").width - 68) / 7) * 0.78,
+);
 
 export default function LKHScreen() {
   const [userData, setUserData] = useState<UserData>({
@@ -143,7 +165,6 @@ export default function LKHScreen() {
   const [token, setToken] = useState<string>("");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [records, setRecords] = useState<{ [key: string]: LKHRecord }>({});
-  const [demoModeActive, setDemoModeActive] = useState(false);
 
   // Periode KKN dihitung dari data server, bukan tanggal hardcode. Server
   // punya dua sumber: per lokasi/kecamatan (wilayahKec.setting - lebih
@@ -256,12 +277,24 @@ export default function LKHScreen() {
   // kamera terbuka, karena menjalankan model AI berulang kali sambil live
   // preview kamera aktif terbukti bikin aplikasi force close di beberapa HP.
   const [hasEnrollment, setHasEnrollment] = useState(false);
+  // Selama sync wajah dari server masih berjalan di perangkat BARU, JANGAN
+  // tampilkan "Daftarkan Wajah": wajahnya mungkin sudah ada di server dan belum
+  // sempat ditarik, sehingga user salah kira harus mendaftar ulang. Default
+  // true, dimatikan begitu status wajah pasti (dari cache lokal ATAU setelah
+  // sync server selesai).
+  const [isCheckingEnrollment, setIsCheckingEnrollment] = useState(true);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
   // DIAGNOSTIK SEMENTARA: menampilkan foto hasil jepretan apa adanya saat
   // deteksi wajah gagal, supaya bisa dilihat langsung (miring/gelap/
   // terpotong?) tanpa perlu Console.app. Hapus setelah root cause ketemu.
   const [debugPhotoUri, setDebugPhotoUri] = useState<string | null>(null);
   const [isCheckingLocation, setIsCheckingLocation] = useState(false);
+  // True kalau foto profil gagal dimuat (URL 404 / jaringan) - render jatuh
+  // ke avatar inisial alih-alih lingkaran kosong.
+  const [photoFailed, setPhotoFailed] = useState(false);
+  // Guard agar sinkron-otomatis (pengganti tombol manual) hanya dicoba sekali
+  // per sesi layar, bukan tiap render / saat sebagian gagal.
+  const autoSyncTriedRef = useRef(false);
 
   // Sengaja cuma jalan sekali saat mount (bukan menambahkan loadUserProfile
   // dkk ke dependency array) - fungsi-fungsi itu tidak dibungkus useCallback
@@ -269,17 +302,31 @@ export default function LKHScreen() {
   // efek ini jalan berulang.
   useEffect(() => {
     loadUserProfile().then(() => {
-      fetchServerLKH();
+      // Bersihkan dulu catatan bekas Mode Demo (fitur demo kini dihapus total)
+      // SEBELUM menarik dari server, supaya tanggal yang cuma "demo" tidak lagi
+      // tampil ungu dan mengikuti status server apa adanya (mis. merah).
+      purgeDemoRecords().finally(() => fetchServerLKH());
     });
     // Wajah terdaftar kini tinggal di server (lihat utils/faceEnrollment.ts).
     // Selaraskan dulu supaya instalasi baru / perangkat baru langsung
     // mengenali wajah yang sudah didaftarkan sebelumnya, baru baca hasilnya.
     // syncEnrollmentFromServer() tidak pernah melempar - kalau server tidak
     // terjangkau, cache lokal yang dipakai.
-    syncEnrollmentFromServer().finally(() => {
-      isEnrolled().then(setHasEnrollment);
+    // Cek cache lokal dulu (cepat) supaya perangkat LAMA yang sudah punya
+    // wajah tersimpan langsung tahu statusnya tanpa menunggu jaringan; lalu
+    // selaraskan dengan server dan cek ulang. isCheckingEnrollment baru
+    // dimatikan saat status pasti - mencegah "Daftarkan Wajah" berkedip di
+    // perangkat BARU selama sync server masih berjalan.
+    isEnrolled().then((local) => {
+      setHasEnrollment(local);
+      if (local) setIsCheckingEnrollment(false);
     });
-    isDemoModeActive().then(setDemoModeActive);
+    syncEnrollmentFromServer().finally(() => {
+      isEnrolled().then((enrolled) => {
+        setHasEnrollment(enrolled);
+        setIsCheckingEnrollment(false);
+      });
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -291,6 +338,20 @@ export default function LKHScreen() {
     );
   }, [records]);
 
+  // Sinkron OTOMATIS senyap: begitu ada laporan offline yang belum terkirim,
+  // coba kirim sekali di latar (tanpa modal/alert), di samping tombol manual.
+  // Guard ref mencegah pengulangan tiap render.
+  useEffect(() => {
+    const hasUnsynced = Object.values(records).some(
+      (r) => r.status === "unsynced",
+    );
+    if (hasUnsynced && !autoSyncTriedRef.current) {
+      autoSyncTriedRef.current = true;
+      handleSync(true).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records]);
+
   const loadUserProfile = async () => {
     try {
       const profileJson = await AsyncStorage.getItem("@user_profile");
@@ -300,9 +361,12 @@ export default function LKHScreen() {
 
       if (profileJson) {
         const data = JSON.parse(profileJson);
-        const fotoName = data.foto || "274131.jpg";
-
-        const dbFotoUrl = profilePhotoUrl(fotoName);
+        // Server bisa mengirim foto:null (peserta belum punya foto profil).
+        // Jangan paksa nama file default yang bukan miliknya - itu berujung
+        // 404 lalu lingkaran kosong. Tanpa foto, fotoUrl dikosongkan dan
+        // render menampilkan avatar inisial.
+        const dbFotoUrl = data.foto ? profilePhotoUrl(data.foto) : "";
+        setPhotoFailed(false);
 
         setUserData({
           nama: data.nama,
@@ -318,9 +382,11 @@ export default function LKHScreen() {
           settingTanggalSelesai: data.settingTanggalSelesai || null,
         });
 
-        if (savedToken) {
-          downloadProfileFromDB(dbFotoUrl, savedToken);
-        }
+        // SENGAJA tidak lagi men-download foto ke file lokal lalu menukar URL-
+        // nya: hasil unduhan (file://) sering gagal dibaca Image di Android,
+        // sehingga foto yang tadinya tampil dari URL remote malah HILANG jadi
+        // inisial beberapa detik kemudian. URL remote (http + header token)
+        // sudah termuat & di-cache Image dengan andal - biarkan apa adanya.
       }
     } catch (e) {
       console.error("Gagal membaca data profil", e);
@@ -337,6 +403,35 @@ export default function LKHScreen() {
       if (uri) setUserData((prev) => ({ ...prev, fotoUrl: uri }));
     } catch (error) {
       console.error("Gagal mengunduh foto database", error);
+    }
+  };
+
+  // Migrasi satu kali: buang catatan absen bekas "Mode Demo". Dulu ada Mode
+  // Demo (kini dihapus total) - absen yang diambil saat mode itu aktif ditandai
+  // isDemo, TIDAK PERNAH dikirim ke server, tapi tetap tersimpan lokal dan
+  // tampil ungu ("Uji Coba/Demo") di kalender. Ada pula bug lama: setelah
+  // mematikan demo, absen normal berikutnya di tanggal yang sama ikut mewarisi
+  // tag demo sehingga terhitung demo walau seharusnya absen biasa. Karena
+  // catatan demo tak pernah ada di server, membuangnya membuat tanggal itu
+  // tampil apa adanya dari server (mis. merah "Tidak Mengisi") - persis seperti
+  // di perangkat lain yang tak pernah kena mode demo.
+  const purgeDemoRecords = async () => {
+    try {
+      const stored = await AsyncStorage.getItem("@lkh_records");
+      if (!stored) return;
+      const parsed = JSON.parse(stored);
+      let changed = false;
+      for (const key of Object.keys(parsed)) {
+        if (parsed[key]?.isDemo) {
+          delete parsed[key];
+          changed = true;
+        }
+      }
+      if (changed) {
+        await AsyncStorage.setItem("@lkh_records", JSON.stringify(parsed));
+      }
+    } catch (e) {
+      console.error("Gagal membersihkan catatan demo lama", e);
     }
   };
 
@@ -427,10 +522,6 @@ export default function LKHScreen() {
   };
 
   const isWithinKKNPeriod = (date: Date) => {
-    // Mode Demo (tombol di ProfileScreen) sengaja melewati cek ini supaya
-    // fitur kamera/lokasi/wajah tetap bisa diuji walau periode KKN asli
-    // sudah lewat - lihat utils/demoMode.ts.
-    if (demoModeActive) return true;
     // Fail-open kalau server belum punya tanggal periode sama sekali (lihat
     // kknPeriod di atas) - jangan blokir absen gara-gara data admin belum
     // lengkap.
@@ -455,8 +546,6 @@ export default function LKHScreen() {
 
     // Tanggal hanya menampilkan info. Pengambilan foto absensi dilakukan
     // lewat tombol "Ambil Foto Absensi" di bawah kalender, bukan dari sini.
-    const demoSuffix = records[dateStr]?.isDemo ? " (Uji Coba / Demo, tidak dikirim ke server)" : "";
-
     if (dateStr === todayStr) {
       Alert.alert(
         "Hari Ini",
@@ -465,7 +554,7 @@ export default function LKHScreen() {
               records[dateStr]?.status === "synced"
                 ? "Sudah Tersinkron (Biru)"
                 : "Belum Tersinkron (Kuning)"
-            }${demoSuffix}`
+            }`
           : 'Anda belum absen hari ini. Gunakan tombol "Ambil Foto Absensi" di bawah kalender.',
       );
     } else {
@@ -477,7 +566,7 @@ export default function LKHScreen() {
             : records[dateStr]?.status === "unsynced"
               ? "Belum Tersinkron (Kuning)"
               : "Tidak Mengisi / Kosong (Merah)"
-        }${demoSuffix}`,
+        }`,
       );
     }
   };
@@ -531,20 +620,11 @@ export default function LKHScreen() {
           "Geofence dilewati: lokasi posko tidak bisa ditentukan untuk akun ini.",
         );
       } else if (!allowed && distanceKm !== null) {
-        // Mode Demo juga melewati geofence, bukan cuma periode KKN - supaya
-        // kamera & verifikasi wajah tetap bisa diuji dari luar posko asli
-        // (lihat catatan isDemo di persistAttendance: absen yang lolos lewat
-        // jalur ini ditandai demo dan tidak pernah dikirim ke server asli).
-        if (!demoModeActive) {
-          Alert.alert(
-            "Di Luar Jangkauan Posko",
-            `Anda berjarak ${distanceKm.toFixed(1)} km dari posko. Absensi hanya bisa dilakukan dalam radius ${MAX_DISTANCE_KM} km dari posko/kecamatan lokasi KKN.`,
-          );
-          return;
-        }
-        console.log(
-          `Mode Demo: geofence dilewati (berjarak ${distanceKm.toFixed(1)} km dari posko).`,
+        Alert.alert(
+          "Di Luar Jangkauan Posko",
+          `Anda berjarak ${distanceKm.toFixed(1)} km dari posko. Absensi hanya bisa dilakukan dalam radius ${MAX_DISTANCE_KM} km dari posko/kecamatan lokasi KKN.`,
         );
+        return;
       }
     } catch (error) {
       if (error instanceof LocationPermissionDeniedError) {
@@ -583,11 +663,6 @@ export default function LKHScreen() {
         photoUri: newUri,
         kode: records[todayStr]?.kode || generateLocalRecordCode(),
         koordinat: pendingCoordinatesRef.current || records[todayStr]?.koordinat,
-        // Absen yang diambil selagi Mode Demo aktif ditandai demo - lihat
-        // handleSync, catatan begini sengaja tidak pernah dikirim ke server
-        // asli (mencegah data uji coba mengotori data KKN sungguhan kalau
-        // kebetulan diambil di luar periode/lokasi asli).
-        isDemo: demoModeActive || records[todayStr]?.isDemo,
       },
     };
 
@@ -739,34 +814,33 @@ export default function LKHScreen() {
     }
   };
 
-  const handleSync = async () => {
-    setIsSyncing(true);
+  // silent=true: sinkron OTOMATIS di latar (dipanggil dari efek saat ada
+  // laporan offline belum terkirim) - tanpa modal loading & tanpa Alert.
+  // silent=false: dipicu tombol manual "Sinkronkan Data" (confirmSync) - pakai
+  // modal loading & tampilkan hasilnya lewat Alert.
+  const handleSync = async (silent = false) => {
+    if (!silent) setIsSyncing(true);
     try {
       const currentToken = await AsyncStorage.getItem("@user_token");
       const penggunaId = await AsyncStorage.getItem("@user_id");
       if (!currentToken || !penggunaId) {
-        Alert.alert(
-          "Gagal",
-          "Sesi login tidak lengkap (ID peserta tidak ada). Silakan login ulang.",
-        );
+        if (!silent) {
+          Alert.alert(
+            "Gagal",
+            "Sesi login tidak lengkap (ID peserta tidak ada). Silakan login ulang.",
+          );
+        }
         return;
       }
 
       const updatedRecords = { ...records };
       let countSync = 0;
       let countFailed = 0;
-      let countDemoSkipped = 0;
       let lastError = "";
 
       for (const key of Object.keys(updatedRecords)) {
         const record = updatedRecords[key];
         if (record.status !== "unsynced") continue;
-        // Catatan demo tidak pernah dikirim ke server asli - lihat catatan
-        // isDemo di persistAttendance.
-        if (record.isDemo) {
-          countDemoSkipped++;
-          continue;
-        }
 
         try {
           const result = await syncOneRecord(penggunaId, currentToken, record);
@@ -786,29 +860,27 @@ export default function LKHScreen() {
       await saveLocalRecords(updatedRecords);
       await fetchServerLKH();
 
-      const demoNote =
-        countDemoSkipped > 0
-          ? `\n\n${countDemoSkipped} laporan demo dilewati (tidak dikirim ke server).`
-          : "";
-
-      if (countFailed === 0) {
-        Alert.alert(
-          "Sinkronisasi Selesai",
-          `${countSync} laporan berhasil disinkronkan ke server.${demoNote}`,
-        );
-      } else {
-        Alert.alert(
-          "Sinkronisasi Sebagian Gagal",
-          `${countSync} berhasil, ${countFailed} gagal.` +
-            (lastError ? `\n\nPesan server: ${lastError}` : "") +
-            demoNote,
-        );
+      if (!silent) {
+        if (countFailed === 0) {
+          Alert.alert(
+            "Sinkronisasi Selesai",
+            `${countSync} laporan berhasil disinkronkan ke server.`,
+          );
+        } else {
+          Alert.alert(
+            "Sinkronisasi Sebagian Gagal",
+            `${countSync} berhasil, ${countFailed} gagal.` +
+              (lastError ? `\n\nPesan server: ${lastError}` : ""),
+          );
+        }
       }
     } catch (e) {
       console.error("Gagal sinkronisasi", e);
-      Alert.alert("Gagal", "Terjadi kesalahan saat sinkronisasi online.");
+      if (!silent) {
+        Alert.alert("Gagal", "Terjadi kesalahan saat sinkronisasi online.");
+      }
     } finally {
-      setIsSyncing(false);
+      if (!silent) setIsSyncing(false);
     }
   };
 
@@ -838,12 +910,7 @@ export default function LKHScreen() {
       const record = records[dateStr];
       let bgStyle = styles.statusNone;
 
-      // Catatan demo diprioritaskan tampil beda dari status lain (termasuk
-      // dari warna "hari ini") supaya tidak pernah tertukar dengan absen
-      // sungguhan sekilas mata.
-      if (record?.isDemo) {
-        bgStyle = styles.statusDemo;
-      } else if (dateStr === todayStr) {
+      if (dateStr === todayStr) {
         bgStyle = styles.statusToday;
       } else if (record?.status === "synced") {
         bgStyle = styles.statusSynced;
@@ -879,48 +946,59 @@ export default function LKHScreen() {
   // sedang memproses). Tanpa ini foto/layar statis bisa langsung dijepret.
   const captureDisabled = isProcessingFace || !liveness.passed;
 
-  // Sudah absen hari ini? (ada catatan berfoto untuk tanggal ini). Kalau ya,
-  // tombol dinonaktifkan & jadi abu-abu - satu hari satu absen.
+  // Sudah absen hari ini? Cukup ADA catatan absen untuk tanggal ini dengan
+  // status apa pun (synced/unsynced) - TIDAK lagi bergantung pada foto lokal.
+  // Ini kunci sinkron lintas-perangkat: kalau sudah absen di iPhone lalu login
+  // di Android, foto selfie-nya memang tak ikut (server tak mengirim balik file
+  // foto), TAPI catatan tanggalnya ADA di server -> tombol tetap terkunci
+  // "Sudah Absen Hari Ini" di perangkat kedua. Dulu syaratnya photoUri lokal,
+  // sehingga di perangkat kedua tombol malah masih bisa diklik (bug lintas-hp).
   // WAJIB syarat hasEnrollment: setelah RESET WAJAH, wajah terdaftar hilang
   // walau catatan absen hari ini masih ada. Tanpa syarat ini tombol tetap
-  // "Sudah Absen Hari Ini" dan terkunci, sehingga pengguna tak bisa mendaftar
-  // ulang wajahnya. Mode demo dikecualikan supaya bisa diuji berulang.
+  // terkunci sehingga pengguna tak bisa mendaftar ulang wajahnya.
+  const todayRecord = records[toDateKey(new Date())];
   const alreadyAttendedToday =
-    !demoModeActive &&
     hasEnrollment &&
-    !!records[toDateKey(new Date())]?.photoUri;
+    (todayRecord?.status === "synced" || todayRecord?.status === "unsynced");
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.glassShadow}>
-          <BlurView intensity={45} tint="light" style={styles.profileCard}>
-            <Image
-              source={{
-                uri: userData.fotoUrl,
-                // Foto profil sebelum ter-download lokal masih menunjuk ke
-                // endpoint yang butuh Bearer token - tanpa header ini,
-                // request-nya gagal diam-diam dan foto jatuh ke placeholder
-                // abu-abu (backgroundColor di bawah). User-Agent juga wajib:
-                // Cloudflare WAF memblokir request non-Dart sebelum sampai
-                // server (lihat utils/deviceInfo.ts).
-                headers: profilePhotoHeaders(token),
-              }}
-              style={styles.profileImage}
-              defaultSource={{
-                uri: "https://uin-alauddin.ac.id/assets/img/logo-uin-alauddin.png",
-              }}
-            />
+          <View style={styles.profileCard}>
+            {userData.fotoUrl && !photoFailed ? (
+              <Image
+                source={{
+                  uri: userData.fotoUrl,
+                  // Header (Bearer + UA Dart) HANYA untuk URL remote http(s):
+                  // endpoint foto butuh token & WAF Cloudflare memblokir non-
+                  // Dart. Untuk file:// lokal (setelah ter-download), mengirim
+                  // header malah membuat Image Android GAGAL - itulah sebab foto
+                  // muncul sebentar lalu hilang jadi inisial.
+                  ...(userData.fotoUrl.startsWith("http")
+                    ? { headers: profilePhotoHeaders(token) }
+                    : {}),
+                }}
+                style={styles.profileImage}
+                onError={() => setPhotoFailed(true)}
+              />
+            ) : (
+              <View style={[styles.profileImage, styles.profileAvatarFallback]}>
+                <Text style={styles.profileAvatarText}>
+                  {initials(userData.nama)}
+                </Text>
+              </View>
+            )}
             <View style={styles.profileInfo}>
               <Text style={styles.profileName}>{userData.nama}</Text>
               <Text style={styles.profileNim}>{userData.nim}</Text>
               <Text style={styles.profileMajor}>{userData.prodi}</Text>
             </View>
-          </BlurView>
+          </View>
         </View>
 
         <View style={styles.glassShadow}>
-          <BlurView intensity={45} tint="light" style={styles.calendarCard}>
+          <View style={styles.calendarCard}>
             <View style={styles.monthNav}>
               <TouchableOpacity
                 style={styles.monthNavBtn}
@@ -966,14 +1044,18 @@ export default function LKHScreen() {
             <TouchableOpacity
               style={[
                 styles.attendanceButton,
-                (isCheckingLocation || alreadyAttendedToday) &&
+                (isCheckingLocation ||
+                  isCheckingEnrollment ||
+                  alreadyAttendedToday) &&
                   styles.attendanceButtonDisabled,
               ]}
               onPress={handleOpenAttendanceCamera}
               activeOpacity={0.85}
-              disabled={isCheckingLocation || alreadyAttendedToday}
+              disabled={
+                isCheckingLocation || isCheckingEnrollment || alreadyAttendedToday
+              }
             >
-              {isCheckingLocation ? (
+              {isCheckingLocation || isCheckingEnrollment ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
                 <FontAwesome5
@@ -985,17 +1067,21 @@ export default function LKHScreen() {
               <Text style={styles.attendanceButtonText}>
                 {isCheckingLocation
                   ? "Memeriksa lokasi..."
-                  : alreadyAttendedToday
-                    ? "Sudah Absen Hari Ini"
-                    : hasEnrollment
-                      ? "Ambil Foto Absensi"
-                      : "Daftarkan Wajah (Langkah Pertama)"}
+                  : isCheckingEnrollment
+                    ? "Memeriksa data wajah..."
+                    : alreadyAttendedToday
+                      ? "Sudah Absen Hari Ini"
+                      : hasEnrollment
+                        ? "Ambil Foto Absensi"
+                        : "Daftarkan Wajah (Langkah Pertama)"}
               </Text>
             </TouchableOpacity>
             <Text style={styles.attendanceHint}>
-              {hasEnrollment
-                ? `Wajah diverifikasi otomatis, dan absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`
-                : `Sebelum absen, daftarkan wajah Anda lewat 3-5 foto selfie. Absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`}
+              {isCheckingEnrollment
+                ? "Menyelaraskan data wajah dari server..."
+                : hasEnrollment
+                  ? `Wajah diverifikasi otomatis, dan absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`
+                  : `Sebelum absen, daftarkan wajah Anda lewat 3-5 foto selfie. Absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`}
             </Text>
 
             <View style={styles.legendContainer}>
@@ -1015,41 +1101,34 @@ export default function LKHScreen() {
                 <View style={[styles.legendDot, styles.statusToday]} />
                 <Text style={styles.legendText}>Hari ini</Text>
               </View>
-              {Object.values(records).some((r) => r.isDemo) && (
-                <View style={styles.legendItem}>
-                  <View style={[styles.legendDot, styles.statusDemo]} />
-                  <Text style={styles.legendText}>Uji Coba (Demo)</Text>
-                </View>
-              )}
             </View>
 
-            {demoModeActive ? (
-              <Text style={styles.demoBadgeText}>
-                Mode Demo aktif - cek periode & lokasi KKN dilewati (matikan lewat halaman Profil)
-              </Text>
-            ) : (
-              !isWithinKKNPeriod(new Date()) && (
-                <Text style={styles.warningText}>Bukan periode LKH</Text>
-              )
+            {!isWithinKKNPeriod(new Date()) && (
+              <Text style={styles.warningText}>Bukan periode LKH</Text>
             )}
-          </BlurView>
+          </View>
         </View>
-      </ScrollView>
 
-      <TouchableOpacity
-        style={styles.fabButton}
-        onPress={confirmSync}
-        activeOpacity={0.8}
-      >
-        <FontAwesome5 name="sync-alt" size={18} color="#FFF" />
-      </TouchableOpacity>
+        {/* Tombol sinkron manual (seperti di iOS) - selalu tersedia sebagai
+            escape-hatch untuk mendorong laporan offline ke server, di samping
+            sinkron-otomatis senyap yang jalan sendiri saat ada laporan baru. */}
+        <TouchableOpacity
+          style={styles.syncButton}
+          onPress={confirmSync}
+          activeOpacity={0.85}
+          disabled={isSyncing}
+        >
+          <FontAwesome5 name="sync-alt" size={14} color="#0E783D" />
+          <Text style={styles.syncButtonText}>Sinkronkan Data</Text>
+        </TouchableOpacity>
+      </ScrollView>
 
       <Modal transparent visible={isSyncing} animationType="fade">
         <View style={styles.modalLoadingOverlay}>
-          <BlurView intensity={60} tint="light" style={styles.loadingBox}>
+          <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color="#0E783D" />
             <Text style={styles.loadingText}>Mensinkronkan Data...</Text>
-          </BlurView>
+          </View>
         </View>
       </Modal>
 
@@ -1212,7 +1291,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 90,
+    // Ruang bawah = tinggi tab bar mengambang (bottom:14 + 62) + jarak aman,
+    // supaya tombol sinkron & legenda tidak tertutup tab bar.
+    paddingBottom: 110,
   },
   glassShadow: {
     borderRadius: 28,
@@ -1225,13 +1306,13 @@ const styles = StyleSheet.create({
   },
   profileCard: {
     flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "#FFFFFF",
     padding: 18,
     borderRadius: 28,
     alignItems: "center",
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
+    borderColor: "#ECEFF3",
   },
   profileImage: {
     width: 60,
@@ -1241,6 +1322,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#EEE",
     borderWidth: 2,
     borderColor: "rgba(255,255,255,0.8)",
+  },
+  // Avatar inisial saat tidak ada foto profil - warna aksen + inisial putih,
+  // seragam dengan avatar sisi dosen (PembimbingScreen).
+  profileAvatarFallback: {
+    backgroundColor: ACCENT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileAvatarText: {
+    color: "#FFF",
+    fontSize: 22,
+    fontWeight: "700",
   },
   profileInfo: {
     flex: 1,
@@ -1262,12 +1355,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   calendarCard: {
-    backgroundColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "#FFFFFF",
     padding: 18,
     borderRadius: 28,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
+    borderColor: "#ECEFF3",
   },
   monthNav: {
     flexDirection: "row",
@@ -1315,9 +1408,13 @@ const styles = StyleSheet.create({
   // Lingkaran warna status di-inset dari sel supaya selalu terlihat sebagai
   // lingkaran terpisah, tidak menyatu jadi kotak/pil dengan tanggal sebelahnya.
   dayCircle: {
-    width: "78%",
-    height: "78%",
-    borderRadius: 999,
+    width: DAY_CIRCLE_SIZE,
+    height: DAY_CIRCLE_SIZE,
+    borderRadius: DAY_CIRCLE_SIZE / 2,
+    // overflow:hidden memaksa Fabric meng-clip ke borderRadius. Tanpa ini,
+    // di Android New Architecture sebagian sel (yang tidak "hari ini")
+    // dirender sebagai kotak-membulat walau borderRadius-nya lingkaran penuh.
+    overflow: "hidden",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1330,7 +1427,6 @@ const styles = StyleSheet.create({
   statusUnsynced: { backgroundColor: "#F5DC94" },
   statusEmpty: { backgroundColor: "#F6C6C6" },
   statusToday: { backgroundColor: "#A6E3B8" },
-  statusDemo: { backgroundColor: "#C9B6E4" },
   statusNone: { backgroundColor: "transparent" },
 
   attendanceButton: {
@@ -1394,31 +1490,27 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 13,
   },
-  demoBadgeText: {
-    color: "#B8860B",
-    fontWeight: "700",
-    textAlign: "center",
-    marginTop: 12,
-    fontSize: 12,
-  },
-  fabButton: {
-    position: "absolute",
-    right: 20,
-    // Tab bar melayang di app/(tabs)/index.tsx menempati kira-kira
-    // 14-76px dari bawah layar (bottom:14 + tinggi 62) - digeser ke atas
-    // secukupnya supaya lolos, tapi tetap di pojok kanan bawah seperti biasa.
-    bottom: 90,
-    backgroundColor: ACCENT,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    justifyContent: "center",
+  // Tombol sinkron in-flow (menggantikan FAB mengambang lama yang menimpa
+  // tombol absen & legenda). Gaya "outline" hijau supaya sekunder terhadap
+  // tombol absen utama, tapi tetap jelas & berlabel.
+  syncButton: {
+    flexDirection: "row",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.3,
-    shadowOffset: { width: 0, height: 6 },
-    shadowRadius: 12,
-    elevation: 5,
+    justifyContent: "center",
+    alignSelf: "center",
+    marginTop: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    borderColor: ACCENT,
+    backgroundColor: "rgba(14,120,61,0.06)",
+  },
+  syncButtonText: {
+    color: ACCENT,
+    fontWeight: "700",
+    fontSize: 14,
+    marginLeft: 8,
   },
   modalLoadingOverlay: {
     flex: 1,
@@ -1432,8 +1524,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: "center",
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.5)",
+    backgroundColor: "#FFFFFF",
   },
   loadingText: {
     marginTop: 12,

@@ -1,6 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BlurView } from "expo-blur";
 import React, { useEffect, useState } from "react";
 import {
     Alert,
@@ -12,9 +11,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { getCalibrationLog } from "../utils/faceAuthNative";
 import {
-    describeFaceStorage,
     getResetQuota,
     MAX_FACE_RESETS,
     resetEnrollment,
@@ -25,7 +22,6 @@ import {
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
-import { isDemoModeActive, setDemoMode } from "../utils/demoMode";
 import Constants from "expo-constants";
 
 interface ProfileScreenProps {
@@ -43,6 +39,14 @@ interface ProfileData {
   kecamatan: string;
   kabupaten: string;
   serverFotoUrl: string;
+}
+
+/** Inisial 1-2 huruf dari nama, untuk avatar placeholder saat tak ada foto. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
@@ -69,39 +73,19 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     max: MAX_FACE_RESETS,
     fromServer: false,
   });
-  const [demoModeActive, setDemoModeActive] = useState(false);
+  // Foto profil gagal/absen -> avatar inisial, bukan lingkaran kosong.
+  const [photoFailed, setPhotoFailed] = useState(false);
 
   // Sengaja cuma jalan sekali saat mount - lihat catatan yang sama di
   // LKHScreen.tsx.
   useEffect(() => {
     loadReferenceFaceState();
     loadUserData();
-    isDemoModeActive().then(setDemoModeActive);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadReferenceFaceState = async () => {
     setResetQuota(await getResetQuota());
-  };
-
-  const handleToggleDemoMode = () => {
-    const next = !demoModeActive;
-    Alert.alert(
-      next ? "Aktifkan Mode Demo?" : "Matikan Mode Demo?",
-      next
-        ? "Cek periode DAN jarak posko KKN di halaman LKH akan dilewati sementara, supaya kamera & verifikasi wajah tetap bisa diuji dari luar periode/lokasi KKN asli. Verifikasi wajah sendiri tetap berjalan apa adanya (tidak dilonggarkan) - absen yang berhasil lewat mode ini ditandai \"Demo\" di kalender dan TIDAK PERNAH dikirim ke server, jadi aman dipakai untuk uji coba."
-        : "Cek periode & jarak posko akan berlaku normal lagi sesuai data server.",
-      [
-        { text: "Batal", style: "cancel" },
-        {
-          text: next ? "Aktifkan" : "Matikan",
-          onPress: async () => {
-            await setDemoMode(next);
-            setDemoModeActive(next);
-          },
-        },
-      ],
-    );
   };
 
   const loadUserData = async () => {
@@ -113,9 +97,10 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
 
       if (profileJson) {
         const data = JSON.parse(profileJson);
-        const fotoName = data.foto || "274131.jpg";
-
-        const dbFotoUrl = profilePhotoUrl(fotoName);
+        // foto:null (peserta tanpa foto profil) -> jangan paksa nama file bogus
+        // yang berujung 404; kosongkan supaya render pakai avatar inisial.
+        const dbFotoUrl = data.foto ? profilePhotoUrl(data.foto) : "";
+        setPhotoFailed(false);
 
         setProfileData({
           nim: data.nim,
@@ -130,9 +115,10 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
           serverFotoUrl: dbFotoUrl,
         });
 
-        if (savedToken) {
-          downloadProfileFromDB(dbFotoUrl, savedToken);
-        }
+        // Tidak men-download foto ke file lokal lalu menukar URL-nya: hasil
+        // unduhan (file://) sering gagal dibaca Image di Android -> foto tampil
+        // sebentar lalu HILANG jadi inisial. URL remote (http + header token)
+        // sudah termuat & di-cache andal.
       }
     } catch (e) {
       console.error("Gagal load biodata", e);
@@ -146,40 +132,6 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     } catch (error) {
       console.error("Gagal mengunduh foto dari database", error);
     }
-  };
-
-  const handleViewCalibrationLog = async () => {
-    const log = await getCalibrationLog();
-    if (log.length === 0) {
-      Alert.alert(
-        "Log Kemiripan Kosong",
-        "Belum ada data kemiripan wajah yang tercatat dari absensi.",
-      );
-      return;
-    }
-    // 10 terbaru dulu (paling relevan buat lihat kejadian baru-baru ini) -
-    // log bisa sampai 200 entri, ditampilkan semua lewat Alert bakal
-    // kepotong/susah dibaca.
-    const recent = log.slice(-10).reverse();
-    const lines = recent.map((entry) => {
-      const time = new Date(entry.t).toLocaleTimeString("id-ID", {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      return `${time}  ${(entry.s * 100).toFixed(1)}%  (${entry.label})`;
-    });
-    Alert.alert(
-      `Log Kemiripan Wajah (${log.length} total, 10 terbaru)`,
-      lines.join("\n"),
-    );
-  };
-
-  // Diagnostik: build sideload tidak punya console, jadi state penyimpanan
-  // wajah hanya bisa diperiksa lewat layar. Menampilkan kedua namespace
-  // (asli + demo) supaya ketahuan apakah data hilang, tersimpan di tempat
-  // yang keliru, atau terbaca rusak.
-  const handleViewFaceState = async () => {
-    Alert.alert("Status Data Wajah", await describeFaceStorage());
   };
 
   const handleResetReferenceFace = () => {
@@ -220,22 +172,28 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.glassShadow}>
-          <BlurView intensity={45} tint="light" style={styles.avatarContainer}>
-            <Image
-              source={{
-                uri: profileData.serverFotoUrl,
-                // Sebelum ter-download lokal, URL ini masih endpoint yang
-                // butuh Bearer token - tanpa header ini request-nya gagal
-                // diam-diam dan foto jatuh ke placeholder abu-abu.
-                // User-Agent wajib: Cloudflare WAF memblokir request
-                // non-Dart (lihat utils/deviceInfo.ts).
-                headers: profilePhotoHeaders(token),
-              }}
-              style={styles.avatarImage}
-              defaultSource={{
-                uri: "https://uin-alauddin.ac.id/assets/img/logo-uin-alauddin.png",
-              }}
-            />
+          <View style={styles.avatarContainer}>
+            {profileData.serverFotoUrl && !photoFailed ? (
+              <Image
+                source={{
+                  uri: profileData.serverFotoUrl,
+                  // Header (Bearer + UA Dart) HANYA untuk URL remote http(s).
+                  // Untuk file:// lokal (setelah ter-download) header malah
+                  // membuat Image Android gagal -> foto hilang jadi inisial.
+                  ...(profileData.serverFotoUrl.startsWith("http")
+                    ? { headers: profilePhotoHeaders(token) }
+                    : {}),
+                }}
+                style={styles.avatarImage}
+                onError={() => setPhotoFailed(true)}
+              />
+            ) : (
+              <View style={[styles.avatarImage, styles.avatarFallback]}>
+                <Text style={styles.avatarFallbackText}>
+                  {initials(profileData.nama)}
+                </Text>
+              </View>
+            )}
             <Text style={styles.nameText}>{profileData.nama}</Text>
             <Text style={styles.nimText}>{profileData.nim}</Text>
 
@@ -257,11 +215,11 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                 Reset Wajah Terdaftar ({resetQuota.remaining}/{resetQuota.max})
               </Text>
             </TouchableOpacity>
-          </BlurView>
+          </View>
         </View>
 
         <View style={styles.glassShadow}>
-          <BlurView intensity={45} tint="light" style={styles.tableCard}>
+          <View style={styles.tableCard}>
             <View style={styles.rowItem}>
               <Text style={styles.rowLabel}>Tanggal Lahir</Text>
               <Text style={styles.rowValue}>{profileData.tglLahir}</Text>
@@ -288,7 +246,7 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                 {profileData.kecamatan}, {profileData.kabupaten}
               </Text>
             </View>
-          </BlurView>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -337,64 +295,6 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
           <Text style={styles.logoutText}>LOGOUT</Text>
         </TouchableOpacity>
 
-        {/* Tombol uji fitur: sengaja diletakkan terpisah di bawah Logout,
-            bukan dekat tombol lain, supaya tidak tersenggol tidak sengaja -
-            ini cuma buat menguji kamera/lokasi/wajah kapan saja, bukan
-            bagian alur absensi normal. */}
-        <TouchableOpacity
-          style={[
-            styles.demoButton,
-            demoModeActive && styles.demoButtonActive,
-          ]}
-          onPress={handleToggleDemoMode}
-          activeOpacity={0.85}
-        >
-          <Ionicons
-            name={demoModeActive ? "flask" : "flask-outline"}
-            size={18}
-            color={demoModeActive ? "#FFF" : "#6E6E73"}
-            style={{ marginRight: 8 }}
-          />
-          <Text
-            style={[
-              styles.demoButtonText,
-              demoModeActive && styles.demoButtonTextActive,
-            ]}
-          >
-            {demoModeActive
-              ? "Mode Demo Aktif - Ketuk untuk Matikan"
-              : "Mode Demo (Uji Fitur Tanpa Periode KKN)"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.demoButton}
-          onPress={handleViewCalibrationLog}
-          activeOpacity={0.85}
-        >
-          <Ionicons
-            name="stats-chart-outline"
-            size={18}
-            color={TEXT_SECONDARY}
-            style={{ marginRight: 8 }}
-          />
-          <Text style={styles.demoButtonText}>Lihat Log Kemiripan Wajah</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.demoButton}
-          onPress={handleViewFaceState}
-          activeOpacity={0.85}
-        >
-          <Ionicons
-            name="bug-outline"
-            size={18}
-            color="#6E6E73"
-            style={{ marginRight: 8 }}
-          />
-          <Text style={styles.demoButtonText}>Status Data Wajah</Text>
-        </TouchableOpacity>
-
         {/* Aplikasi ini dipasang lewat sideload, sering beberapa build
             berturut-turut dalam sehari - tanpa ini tidak ada cara memastikan
             build mana yang benar-benar terpasang saat menguji perbaikan.
@@ -422,7 +322,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
+    // Ruang bawah = tinggi tab bar mengambang + jarak aman, supaya tombol
+    // LOGOUT & baris data terakhir (Lokasi KKN) tidak tertutup tab bar.
+    paddingBottom: 110,
     alignItems: "center",
   },
   glassShadow: {
@@ -437,13 +339,13 @@ const styles = StyleSheet.create({
   },
   avatarContainer: {
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "#FFFFFF",
     width: "100%",
     padding: 22,
     borderRadius: 28,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
+    borderColor: "#ECEFF3",
   },
   avatarImage: {
     width: 110,
@@ -453,6 +355,17 @@ const styles = StyleSheet.create({
     borderColor: ACCENT,
     marginBottom: 12,
     backgroundColor: "#EEE",
+  },
+  // Avatar inisial saat tidak ada foto profil (seragam dengan sisi dosen).
+  avatarFallback: {
+    backgroundColor: ACCENT,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarFallbackText: {
+    color: "#FFF",
+    fontSize: 40,
+    fontWeight: "700",
   },
   nameText: {
     fontSize: 18,
@@ -482,14 +395,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   tableCard: {
-    backgroundColor: "rgba(255,255,255,0.45)",
+    backgroundColor: "#FFFFFF",
     width: "100%",
     borderRadius: 28,
     paddingHorizontal: 18,
     paddingVertical: 6,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.65)",
+    borderColor: "#ECEFF3",
   },
   rowItem: {
     flexDirection: "row",
@@ -532,34 +445,10 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.3,
   },
-  demoButton: {
-    flexDirection: "row",
-    backgroundColor: "rgba(120,130,150,0.12)",
-    width: "100%",
-    paddingVertical: 13,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: "rgba(120,130,150,0.2)",
-  },
-  demoButtonActive: {
-    backgroundColor: "#B8860B",
-    borderColor: "#B8860B",
-  },
   versionText: {
     textAlign: "center",
     color: "#8E8E93",
     fontSize: 12,
     marginTop: 18,
-  },
-  demoButtonText: {
-    color: TEXT_SECONDARY,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  demoButtonTextActive: {
-    color: "#FFF",
   },
 });

@@ -15,7 +15,6 @@ import {
   View,
 } from "react-native";
 
-import { startDemoSession, startDemoPembimbingSession } from "../utils/demoMode";
 import { getDeviceInfoObject, APP_VERSION, API_USER_AGENT } from "../utils/deviceInfo";
 import { API_BASE } from "../utils/api";
 import { fetchPembimbing } from "../utils/pembimbingApi";
@@ -313,58 +312,6 @@ export default function LoginScreen({ onLoginSuccess }) {
     }
   };
 
-  // Demo pembimbing: sesi lokal tanpa server (sample data di PembimbingScreen),
-  // supaya sisi pembimbing bisa didemokan tanpa akun dosen di server dev.
-  const handleDemoPembimbing = () => {
-    Alert.alert(
-      "Masuk Demo Pembimbing",
-      "Mode demo pembimbing memakai data mahasiswa contoh tanpa menghubungi server. Cocok untuk mencoba tampilan sisi pembimbing sebelum ada akun dosen.",
-      [
-        { text: "Batal", style: "cancel" },
-        {
-          text: "Masuk Demo",
-          onPress: async () => {
-            try {
-              await startDemoPembimbingSession();
-              if (onLoginSuccess) onLoginSuccess();
-            } catch (e) {
-              console.error("Gagal masuk demo pembimbing:", e);
-              Alert.alert("Error", "Gagal menyiapkan sesi demo pembimbing.");
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  // Login lokal tanpa server: akun KKN terikat periode angkatan, jadi setelah
-  // masa KKN selesai server menolak login (401 "invalid credentials"). Sesi
-  // demo memakai token dummy + mode demo aktif, sehingga catatan absen ter-tag
-  // isDemo dan tidak pernah dikirim ke server asli.
-  const handleDemoLogin = () => {
-    Alert.alert(
-      "Masuk Mode Demo",
-      "Mode demo memakai profil dummy tanpa menghubungi server. Catatan absensi ditandai demo dan TIDAK akan dikirim ke server.\n\nCocok untuk mencoba fitur saat akun KKN sudah tidak aktif.",
-      [
-        { text: "Batal", style: "cancel" },
-        {
-          text: "Masuk Demo",
-          onPress: async () => {
-            try {
-              await startDemoSession();
-              if (onLoginSuccess) {
-                onLoginSuccess();
-              }
-            } catch (e) {
-              console.error("Gagal masuk mode demo:", e);
-              Alert.alert("Error", "Gagal menyiapkan sesi demo.");
-            }
-          },
-        },
-      ],
-    );
-  };
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -496,27 +443,6 @@ export default function LoginScreen({ onLoginSuccess }) {
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.demoButton}
-            onPress={
-              activeTab === "dosen" ? handleDemoPembimbing : handleDemoLogin
-            }
-            activeOpacity={0.8}
-          >
-            <View style={styles.buttonContent}>
-              <MaterialCommunityIcons
-                name="flask-outline"
-                size={20}
-                color="#0B753A"
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.demoButtonText}>
-                {activeTab === "dosen"
-                  ? "MASUK DEMO PEMBIMBING"
-                  : "MASUK MODE DEMO"}
-              </Text>
-            </View>
-          </TouchableOpacity>
         </View>
 
         {/* Angkanya dibaca dari app.json, bukan ditulis tangan seperti
@@ -641,20 +567,6 @@ const styles = StyleSheet.create({
   loginButtonText: {
     color: "#FFF",
     fontSize: 16,
-    fontWeight: "bold",
-  },
-  demoButton: {
-    borderWidth: 1.5,
-    borderColor: "#0B753A",
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 10,
-  },
-  demoButtonText: {
-    color: "#0B753A",
-    fontSize: 14,
     fontWeight: "bold",
   },
   footerText: {
