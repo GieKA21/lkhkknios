@@ -46,7 +46,6 @@ import {
 import { APP_VERSION, API_USER_AGENT, getDeviceInfoStr } from "../utils/deviceInfo";
 import {
     API_BASE,
-    downloadProfilePhoto,
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
@@ -390,19 +389,6 @@ export default function LKHScreen() {
       }
     } catch (e) {
       console.error("Gagal membaca data profil", e);
-    }
-  };
-
-  const downloadProfileFromDB = async (url: string, authToken: string) => {
-    try {
-      const uri = await downloadProfilePhoto(
-        url,
-        authToken,
-        "lkh_profile_db.jpg",
-      );
-      if (uri) setUserData((prev) => ({ ...prev, fotoUrl: uri }));
-    } catch (error) {
-      console.error("Gagal mengunduh foto database", error);
     }
   };
 

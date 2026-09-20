@@ -1,98 +1,12 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
 /**
- * Toggle to test attendance/camera/location features outside the real KKN
- * period and outside the posko geofence (see the "Demo" button in
- * ProfileScreen). Bypasses the KKN period + geofence gates in LKHScreen -
- * face verification itself stays real (not loosened), so the actual
- * detection/matching pipeline is still genuinely exercised. Attendance
- * records created while this is active are tagged `isDemo` (LKHScreen's
- * LKHRecord) and are never sent to the real /api/simpan-lkh endpoint.
- */
-const DEMO_MODE_KEY = "@demo_mode";
-
-export async function isDemoModeActive(): Promise<boolean> {
-  return (await AsyncStorage.getItem(DEMO_MODE_KEY)) === "1";
-}
-
-export async function setDemoMode(active: boolean): Promise<void> {
-  if (active) {
-    await AsyncStorage.setItem(DEMO_MODE_KEY, "1");
-  } else {
-    await AsyncStorage.removeItem(DEMO_MODE_KEY);
-  }
-}
-
-/**
- * Placeholder auth token written by startDemoSession() so the app's
- * "logged in?" check (@user_token exists) passes without ever contacting
- * the server. Any request sent with it simply gets a 401 from the server,
- * which every caller already treats as "keep local data" - and records
- * captured during the session are tagged `isDemo` anyway, so they are
- * never synced.
+ * Token sesi lokal peninggalan "Mode Demo". Fitur demo (login demo, toggle
+ * mode demo, dashboard contoh dosen) sudah DIHAPUS dari aplikasi.
+ *
+ * Konstanta ini DIPERTAHANKAN karena utils/faceEnrollment.ts masih memakainya
+ * sebagai penanda namespace penyimpanan wajah (memisahkan data sesi demo lama
+ * dari akun asli). Tidak ada sesi yang akan bernilai token ini lagi, jadi
+ * efektifnya storageKeys selalu memilih namespace "akun asli" - tapi menghapus
+ * penanda ini sepenuhnya berarti mengubah logika storageKeys yang kritikal
+ * untuk verifikasi wajah, jadi sengaja dibiarkan agar aman.
  */
 export const DEMO_TOKEN = "demo-token-lokal";
-
-/**
- * Dummy profile shown on LKH/Profile screens during a demo session. Fields
- * mirror the shape LoginScreen stores after a real /api/peserta response.
- */
-const DEMO_PROFILE = {
-  nim: "DEMO",
-  nama: "Peserta Demo",
-  foto: "",
-  tglLahir: "",
-  prodi: "[Mode Demo] Prodi",
-  fakultas: "[Mode Demo] Fakultas",
-  tahunMasuk: "",
-  angkatan: "",
-  kecamatan: "",
-  kabupaten: "",
-  poskoKoordinat: null,
-  angkatanTanggalMulai: null,
-  angkatanTanggalSelesai: null,
-  settingTanggalMulai: null,
-  settingTanggalSelesai: null,
-};
-
-/**
- * Full demo login, for when the student no longer has an active account on
- * the LKH server (account is tied to the KKN period - once their angkatan's
- * term ends the login endpoint permanently returns "invalid credentials").
- * Sets a local-only token + dummy profile and turns demo mode ON, so all
- * period/geofence gates open and nothing can reach the real API. Ended by
- * logging out (ProfileScreen clears @demo_mode along with the session).
- */
-export async function startDemoSession(): Promise<void> {
-  await AsyncStorage.setItem("@user_token", DEMO_TOKEN);
-  await AsyncStorage.setItem("@user_nim", DEMO_PROFILE.nim);
-  await AsyncStorage.setItem("@user_profile", JSON.stringify(DEMO_PROFILE));
-  await AsyncStorage.setItem("@user_role", "peserta");
-  await setDemoMode(true);
-}
-
-/**
- * Profil pembimbing dummy untuk sesi demo - dipakai agar sisi pembimbing bisa
- * dibangun & didemokan TANPA akun pembimbing di server dev (yang belum ada).
- * PembimbingScreen mendeteksi sesi demo lewat token === DEMO_TOKEN, lalu
- * menampilkan daftar mahasiswa contoh alih-alih memanggil server.
- */
-export const DEMO_PEMBIMBING_PROFILE = {
-  nip: "DEMO-DOSEN",
-  nama: "Pembimbing Demo",
-  foto: "",
-  prodi: "[Mode Demo] Prodi",
-  fakultas: "[Mode Demo] Fakultas",
-};
-
-/** Login demo sebagai PEMBIMBING (peran "pembimbing"), tanpa server. */
-export async function startDemoPembimbingSession(): Promise<void> {
-  await AsyncStorage.setItem("@user_token", DEMO_TOKEN);
-  await AsyncStorage.setItem("@user_nim", DEMO_PEMBIMBING_PROFILE.nip);
-  await AsyncStorage.setItem(
-    "@user_profile",
-    JSON.stringify(DEMO_PEMBIMBING_PROFILE),
-  );
-  await AsyncStorage.setItem("@user_role", "pembimbing");
-  await setDemoMode(true);
-}

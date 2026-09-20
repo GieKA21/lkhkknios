@@ -18,7 +18,6 @@ import {
     type ResetQuota,
 } from "../utils/faceEnrollment";
 import {
-    downloadProfilePhoto,
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
@@ -122,15 +121,6 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
       }
     } catch (e) {
       console.error("Gagal load biodata", e);
-    }
-  };
-
-  const downloadProfileFromDB = async (url: string, authToken: string) => {
-    try {
-      const uri = await downloadProfilePhoto(url, authToken, "profile_db.jpg");
-      if (uri) setProfileData((prev) => ({ ...prev, serverFotoUrl: uri }));
-    } catch (error) {
-      console.error("Gagal mengunduh foto dari database", error);
     }
   };
 

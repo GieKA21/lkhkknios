@@ -16,7 +16,6 @@ import {
   View,
 } from "react-native";
 import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
-import { DEMO_TOKEN } from "../utils/demoMode";
 import {
   fetchPembimbingDates,
   fetchStudentLkh,
@@ -40,15 +39,6 @@ interface Student {
 
 /** Ringkasan kehadiran satu tanggal (dari /api/pembimbing-tanggal). */
 type DayFill = "all" | "some" | "none";
-
-// Data contoh untuk sesi DEMO pembimbing.
-const SAMPLE_STUDENTS: Student[] = [
-  { id: 1, kode: "60200122001", nama: "Andi Pratama", prodi: "Teknik Informatika", kecamatan: "Kec. Somba Opu" },
-  { id: 2, kode: "60200122002", nama: "Siti Nurhaliza", prodi: "Ilmu Hukum", kecamatan: "Kec. Somba Opu" },
-  { id: 3, kode: "60200122003", nama: "Muh. Rizky", prodi: "Hukum Keluarga", kecamatan: "Kec. Somba Opu" },
-  { id: 4, kode: "60200122004", nama: "Dewi Lestari", prodi: "Ilmu Hukum", kecamatan: "Kec. Somba Opu" },
-  { id: 5, kode: "60200122005", nama: "Ahmad Fauzan", prodi: "Teknik Informatika", kecamatan: "Kec. Somba Opu" },
-];
 
 const WEEKDAYS = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const MONTHS = [
@@ -151,7 +141,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const [nama, setNama] = useState("Memuat...");
   const [nip, setNip] = useState("");
   const [prodi, setProdi] = useState("");
-  const [isDemo, setIsDemo] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [dayFill, setDayFill] = useState<Record<string, DayFill>>({});
   const [loading, setLoading] = useState(true);
@@ -204,14 +193,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         setProdi(p.prodi || "");
       }
 
-      const demo = token === DEMO_TOKEN;
-      setIsDemo(demo);
-
-      if (demo) {
-        setStudents(SAMPLE_STUDENTS);
-        setDayFill({ [dateKey(now.getFullYear(), now.getMonth(), 18)]: "some" });
-        return;
-      }
       if (!savedNip || !token) {
         setError("Sesi tidak lengkap. Silakan login ulang.");
         return;
@@ -238,15 +219,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
       setSearch("");
       setOnlyAbsent(false);
       setHadir({});
-      if (isDemo) {
-        // Contoh: sebagian hadir.
-        setHadir({
-          "60200122001": true,
-          "60200122002": true,
-          "60200122005": true,
-        });
-        return;
-      }
       const token = tokenRef.current;
       const nipToUse = nipRef.current;
       if (!token || !nipToUse) return;
@@ -261,7 +233,7 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         setHadirLoading(false);
       }
     },
-    [isDemo],
+    [],
   );
 
   // Riwayat kehadiran: bandingkan tanggal LKH mahasiswa (getLkh) dengan
@@ -276,12 +248,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         .filter((d) => d <= today)
         .sort();
 
-      if (isDemo) {
-        setRiwayat(
-          periodDays.map((d, i) => ({ date: d, filled: i % 3 !== 0 })),
-        );
-        return;
-      }
       const token = tokenRef.current;
       if (!token) return;
       setRiwayatLoading(true);
@@ -305,48 +271,8 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         setRiwayatLoading(false);
       }
     },
-    [dayFill, isDemo],
+    [dayFill],
   );
-
-  // DIAGNOSTIK sementara: kenapa kalender kosong? Tampilkan @user_id dan
-  // respons MENTAH pembimbing-tanggal + peserta-bimbing.
-  const showDebug = async () => {
-    try {
-      const [token, id, savedNip] = await Promise.all([
-        AsyncStorage.getItem("@user_token"),
-        AsyncStorage.getItem("@user_id"),
-        AsyncStorage.getItem("@user_nim"),
-      ]);
-      const cut = (v: unknown) => {
-        const s = JSON.stringify(v);
-        return s.length > 600 ? s.slice(0, 600) + "…" : s;
-      };
-      let tgl = "(-)";
-      let ros = "(-)";
-      try {
-        tgl = id
-          ? cut(await fetchPembimbingDates(id, token || ""))
-          : "TANPA @user_id!";
-      } catch (e) {
-        tgl = `ERROR ${e instanceof Error ? e.message : String(e)}`;
-      }
-      try {
-        ros = savedNip
-          ? cut(await fetchSupervisedStudents(savedNip, token || ""))
-          : "TANPA nip!";
-      } catch (e) {
-        ros = `ERROR ${e instanceof Error ? e.message : String(e)}`;
-      }
-      Alert.alert(
-        "Debug Dosen",
-        `@user_id: ${id ?? "(KOSONG!)"}\nnip: ${savedNip ?? "-"}\n\n` +
-          `[pembimbing-tanggal]\n${tgl}\n\n[peserta-bimbing]\n${ros}`,
-      );
-    } catch (e) {
-      Alert.alert("Debug", String(e));
-    }
-  };
-
 
   // ---- Kalender ----
   const calendarCells = useMemo(() => {
@@ -406,11 +332,6 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
           </View>
         </View>
 
-        {isDemo && (
-          <Text style={styles.demoNote}>
-            Mode Demo Pembimbing - data di bawah adalah CONTOH.
-          </Text>
-        )}
 
         {loading ? (
           <View style={styles.centerBox}>
@@ -787,15 +708,6 @@ const styles = StyleSheet.create({
   },
   name: { fontSize: 18, fontWeight: "700", color: TEXT_PRIMARY },
   nip: { fontSize: 13, color: TEXT_SECONDARY, marginTop: 2 },
-  demoNote: {
-    fontSize: 12.5,
-    color: "#8A5A00",
-    backgroundColor: "#FFF4DC",
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 16,
-    overflow: "hidden",
-  },
   calendarCard: {
     backgroundColor: "#FFFFFF",
     borderRadius: 20,

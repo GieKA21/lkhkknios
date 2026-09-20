@@ -150,38 +150,3 @@ export async function clearPresensiProgramCache(): Promise<void> {
   await AsyncStorage.removeItem(PROGRAM_ID_KEY);
 }
 
-/**
- * DIAGNOSTIK: tampilkan respons MENTAH /api/program dan data yang akan dipakai
- * untuk membuat program, agar terlihat kenapa "menyiapkan program presensi"
- * gagal (endpoint mana yang membalas HTML/error, atau id mana yang kosong).
- */
-export async function describeServerProgram(token: string | null): Promise<string> {
-  if (!token) return "program server: token kosong";
-  const ids = await readProfileIds();
-  const cached = await AsyncStorage.getItem(PROGRAM_ID_KEY);
-
-  const lines = [
-    `cache program_id : ${cached ?? "(kosong)"}`,
-    `nim              : ${ids.nim ?? "(kosong)"}`,
-    `pengguna_id      : ${ids.penggunaId ?? "(kosong)"}`,
-    `angkatan_id      : ${ids.angkatanId ?? "(KOSONG!)"}`,
-    `wilayah_id       : ${ids.wilayahId ?? "(KOSONG!)"}`,
-    `tanggal          : ${ids.tanggalMulai ?? "-"} .. ${ids.tanggalSelesai ?? "-"}`,
-  ];
-
-  if (ids.nim) {
-    try {
-      const raw = await apiGet<unknown>(PATH_PROGRAM, token, { nim: ids.nim });
-      const preview = JSON.stringify(raw);
-      lines.push(
-        `GET /api/program : ${preview.length > 300 ? preview.slice(0, 300) + "..." : preview}`,
-        `  -> program_id pertama: ${firstProgramId(raw) ?? "(tidak ada program)"}`,
-      );
-    } catch (e) {
-      lines.push(
-        `GET /api/program : ERROR ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-  return lines.join("\n");
-}

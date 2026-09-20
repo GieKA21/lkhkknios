@@ -725,8 +725,9 @@ const MAX_CALIBRATION_LOG_ENTRIES = 200;
  * Appends a similarity sample to a small on-device log (AsyncStorage) for
  * threshold calibration - call this on every verify attempt (both accepted
  * and rejected), labeling whether you personally know it was your own face
- * or someone else's. Read it back with getCalibrationLog(). This never
- * gets sent anywhere - it's purely a local debugging aid.
+ * or someone else's. Kept on-device (AsyncStorage) for offline calibration;
+ * no in-app reader anymore. This never gets sent anywhere - it's purely a
+ * local debugging aid.
  */
 export async function logSimilaritySample(
   similarity: number,
@@ -742,12 +743,5 @@ export async function logSimilaritySample(
   } catch {
     // Best-effort only - never let logging break the actual verify flow.
   }
-}
-
-export async function getCalibrationLog(): Promise<
-  { t: number; s: number; label: string }[]
-> {
-  const raw = await AsyncStorage.getItem(CALIBRATION_LOG_KEY);
-  return raw ? JSON.parse(raw) : [];
 }
 

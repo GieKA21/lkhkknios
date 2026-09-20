@@ -1,4 +1,3 @@
-import * as FileSystem from "expo-file-system/legacy";
 import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
 
 /**
@@ -173,20 +172,6 @@ export function profilePhotoHeaders(token: string): Record<string, string> {
   return token
     ? { Authorization: `Bearer ${token}`, "User-Agent": API_USER_AGENT }
     : { "User-Agent": API_USER_AGENT };
-}
-
-/** Unduh ke berkas lokal; null kalau server tidak menjawab 200. */
-export async function downloadProfilePhoto(
-  url: string,
-  token: string,
-  fileName: string,
-): Promise<string | null> {
-  const { uri, status } = await FileSystem.downloadAsync(
-    url,
-    FileSystem.documentDirectory + fileName,
-    { headers: { ...profilePhotoHeaders(token), "Accept-Encoding": "gzip" } },
-  );
-  return status === 200 ? uri : null;
 }
 
 export async function apiPostForm<T>(

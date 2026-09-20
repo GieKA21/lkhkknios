@@ -1,9 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { faceSimilarity } from "./faceAuthNative";
 import { DEMO_TOKEN } from "./demoMode";
-import { describeServerProgram } from "./presensiProgram";
 import {
-  describeServerReset,
   fetchServerEnrollment,
   fetchServerResetInfo,
   pushServerEnrollment,
@@ -428,61 +426,3 @@ export async function resetEnrollment(): Promise<boolean> {
 
 /** Hapus seluruh state verifikasi wajah lokal, misalnya saat ganti akun. */
 
-/**
- * Ringkasan mentah isi penyimpanan wajah, untuk ditampilkan lewat Alert di
- * halaman Profil.
- *
- * Ada karena build sideload tidak punya console: saat state wajah terlihat
- * salah, satu-satunya cara mengetahui SIAPA yang salah - datanya memang
- * hilang, tersimpan di namespace yang keliru, atau terbaca rusak - adalah
- * mengeluarkan angkanya lewat UI. Menampilkan KEDUA namespace sekaligus,
- * karena justru perbandingannya yang menjawab pertanyaan itu.
- */
-export async function describeFaceStorage(): Promise<string> {
-  const [token, nim, id, demoFlag] = await Promise.all([
-    AsyncStorage.getItem("@user_token"),
-    AsyncStorage.getItem("@user_nim"),
-    AsyncStorage.getItem("@user_id"),
-    AsyncStorage.getItem("@demo_mode"),
-  ]);
-  const keys = await storageKeys();
-
-  const lines = [
-    `Sesi     : ${keys.isDemoSession ? "DEMO" : "AKUN ASLI"}`,
-    `NIM      : ${nim ?? "-"}`,
-    `user_id  : ${id ?? "(KOSONG - login ulang!)"}`,
-    `Token    : ${token ? token.slice(0, 12) + "..." : "(tidak ada)"}`,
-    `Mode demo: ${demoFlag === "1" ? "aktif" : "mati"}`,
-    `Key aktif: ${keys.enrollment}`,
-    "",
-    "[RESET DARI SERVER]",
-    await describeServerReset(id, token),
-    "",
-    "[PROGRAM PRESENSI]",
-    await describeServerProgram(token),
-  ];
-
-  for (const [label, suffix] of [
-    ["ASLI", ""],
-    ["DEMO", "_demo"],
-  ] as const) {
-    const raw = await AsyncStorage.getItem(ENROLLMENT_KEY + suffix);
-    const parsed = parseEnrollment(raw);
-    const used = await AsyncStorage.getItem(RESET_COUNT_KEY + suffix);
-    const pending = await AsyncStorage.getItem(PENDING_PUSH_KEY + suffix);
-    lines.push(
-      "",
-      `[${label}]`,
-      `  wajah  : ${
-        parsed
-          ? `${parsed.embeddings.length} embedding`
-          : raw
-            ? `ADA TAPI DITOLAK (${raw.length} char)`
-            : "kosong"
-      }`,
-      `  reset  : ${used ?? 0} terpakai`,
-      `  antre  : ${pending ? "ya" : "tidak"}`,
-    );
-  }
-  return lines.join("\n");
-}
