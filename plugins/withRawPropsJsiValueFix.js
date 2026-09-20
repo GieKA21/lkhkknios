@@ -1,4 +1,9 @@
-const { withDangerousMod, withXcodeProject, withAppDelegate } = require("@expo/config-plugins");
+const {
+  withDangerousMod,
+  withXcodeProject,
+  withAppDelegate,
+  withMainApplication,
+} = require("@expo/config-plugins");
 const fs = require("fs");
 const path = require("path");
 
@@ -123,9 +128,54 @@ function withRawPropsJsiValueAppDelegate(config) {
   });
 }
 
+// ANDROID. The same flag is off by default here too, and without it opening the
+// camera crashes the app outright:
+//   "Exception in HostFunction: PreviewView.previewOutput: Cannot cast dynamic
+//    to a jsi::Value type."
+// loadReactNative() has already run RN's own one-time
+// ReactNativeFeatureFlags.override(...), so - exactly as on iOS - we cannot call
+// override() again and must dangerouslyForceOverride() afterwards. That REPLACES
+// the whole flag set, so this provider re-declares the same four flags that
+// DefaultNewArchitectureEntryPoint's Stable_Android override sets (that class is
+// final, so it cannot simply be subclassed) and adds ours on top.
+const ANDROID_IMPORTS =
+  "import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags\n" +
+  "import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsDefaults\n";
+
+const ANDROID_OVERRIDE =
+  "    ReactNativeFeatureFlags.dangerouslyForceOverride(\n" +
+  "        object : ReactNativeFeatureFlagsDefaults() {\n" +
+  "          override fun useFabricInterop(): Boolean = true\n" +
+  "          override fun enableFabricRenderer(): Boolean = true\n" +
+  "          override fun useTurboModules(): Boolean = true\n" +
+  "          override fun useShadowNodeStateOnClone(): Boolean = true\n" +
+  "          override fun useRawPropsJsiValue(): Boolean = true\n" +
+  "        })\n";
+
+function withRawPropsJsiValueMainApplication(config) {
+  return withMainApplication(config, (config) => {
+    let contents = config.modResults.contents;
+    if (contents.includes("useRawPropsJsiValue")) {
+      return config;
+    }
+    const importAnchor =
+      "import com.facebook.react.defaults.DefaultReactNativeHost\n";
+    if (contents.includes(importAnchor)) {
+      contents = contents.replace(importAnchor, importAnchor + ANDROID_IMPORTS);
+    }
+    const callAnchor = "    loadReactNative(this)\n";
+    if (contents.includes(callAnchor)) {
+      contents = contents.replace(callAnchor, callAnchor + ANDROID_OVERRIDE);
+    }
+    config.modResults.contents = contents;
+    return config;
+  });
+}
+
 module.exports = function withRawPropsJsiValueFix(config) {
   config = withRawPropsJsiValueFiles(config);
   config = withRawPropsJsiValueXcodeProject(config);
   config = withRawPropsJsiValueAppDelegate(config);
+  config = withRawPropsJsiValueMainApplication(config);
   return config;
 };
