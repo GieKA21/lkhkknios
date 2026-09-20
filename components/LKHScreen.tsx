@@ -103,9 +103,8 @@ function toDateKey(date: Date): string {
 }
 
 function generateLocalRecordCode(): string {
-  // Format meniru kode simpan_lkh yang terbukti diterima server (terlihat di
-  // tabel logging): 40 heksadesimal + "@" + timestamp milidetik. Server
-  // memakainya sebagai kunci unik anti-duplikat saat retry.
+  // Kode unik anti-duplikat untuk retry: 40 heksadesimal + "@" + timestamp
+  // milidetik, sesuai format `kode` yang diterima endpoint simpan-lkh.
   const hex = Array.from({ length: 40 }, () =>
     Math.floor(Math.random() * 16).toString(16),
   ).join("");
@@ -206,43 +205,30 @@ export default function LKHScreen() {
   // FHD_16_9 dipakai karena rasio 9:16-nya jauh lebih dekat ke bentuk preview,
   // dan resolusinya (1080x1920) sudah jauh lebih dari cukup untuk model
   // MobileFaceNet yang inputnya cuma 112x112.
-  // Referensi stabil untuk config & outputs. VisionCamera sendiri sudah
-  // menyaring array outputs lewat useMemoizedArray (dicek di source-nya),
-  // jadi ini BUKAN penyebab kedip - tapi dokumentasinya tetap meminta
-  // outputs dimemo, dan menstabilkannya gratis. Penyebab kedip/gelap yang
-  // sebenarnya ditangani lewat CAMERA_CONSTRAINTS + throttle di bawah.
+  // config & outputs dimemo agar referensinya stabil (diminta dokumentasi
+  // VisionCamera); penyebab kedip/gelap ditangani lewat constraints + throttle.
   const photoConfig = useMemo(
     () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
     [],
   );
   const photoOutput = usePhotoOutput(photoConfig);
   const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
-  // PREVIEW GELAP: detektor wajah menambah stream frame, dan selama ada
-  // stream berjalan iOS membatasi lama pencahayaan (exposure) maksimum ke
-  // satu durasi frame - pada 30fps itu 1/30 detik. Aplikasi Kamera bawaan
-  // tidak terikat itu (mode foto/Night bisa memapar jauh lebih lama),
-  // makanya di ruangan yang sama preview kita jauh lebih gelap. Menurunkan
-  // ke 15fps menggandakan batas exposure (2x lebih terang) dan sekaligus
-  // memangkas separuh frekuensi callback onFacesDetected ke thread JS.
-  // Tantangan gerak kepala sama sekali tidak butuh 30fps.
+  // PREVIEW GELAP: saat detektor wajah aktif, iOS membatasi exposure ke 1
+  // durasi frame (1/30 dtk @30fps), jadi preview lebih gelap. 15fps
+  // menggandakan batas exposure (2x lebih terang) & memangkas separuh callback
+  // onFacesDetected ke thread JS - tantangan gerak kepala tak butuh 30fps.
   const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
   const faceQualityGate = useFaceQualityGate();
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
   // lolos - lihat hooks/useLivenessChallenge.ts.
   const liveness = useLivenessChallenge();
-  // Satu callback ke kamera yang menyuapi frame ke quality gate DAN ke
-  // liveness sekaligus. Keduanya membaca yaw/bounds yang sama; tidak ada
-  // mode detektor baru yang dinyalakan (aman dari crash SIGSEGV).
-  // KEDIP/CRASH: onFacesDetected dipanggil di thread JS untuk SETIAP frame,
-  // dan kedua hook di bawah memanggil setState. Saat kepala ditoleh, pesan
-  // panduan berganti-ganti sehingga komponen sebesar ini benar-benar
-  // dirender ulang puluhan kali per detik - thread JS tersedak (UI tersendat)
-  // dan tekanan itu memperbesar peluang SIGSEGV yang memang diakui library
-  // MLKit-iOS di iOS 26. Dibatasi ~9x per detik: masih jauh lebih cepat dari
-  // gerakan kepala manusia (~1 detik per tolehan), tapi beban JS-nya turun
-  // drastis. Frame yang dilewati tidak hilang maknanya - yaw berubah mulus,
-  // jadi ambang tolehan tetap tertangkap.
+  // Satu callback menyuapi frame ke quality gate DAN liveness (keduanya baca
+  // yaw/bounds yang sama). onFacesDetected dipanggil per-frame di thread JS &
+  // tiap hook memanggil setState; tanpa throttle, komponen ini dirender ulang
+  // puluhan kali/detik - UI tersendat & memperbesar peluang SIGSEGV (MLKit-iOS
+  // di iOS 26). Dibatasi ~9x/detik: masih jauh lebih cepat dari gerak kepala
+  // (~1 dtk/tolehan), yaw tetap tertangkap mulus.
   const lastFaceTickRef = useRef(0);
   const handleCameraFaces = useCallback(
     (faces: Face[]) => {
@@ -734,12 +720,10 @@ export default function LKHScreen() {
     ]);
   };
 
-  // Endpoint & nama field di bawah ini direkonstruksi dari string di dalam
-  // libapp.so aplikasi resmi (Flutter, decompiled) - bukan dari dokumentasi
-  // API resmi, karena kita tidak punya akses ke situ. Kalau server menolak
-  // dengan pesan validasi tertentu, itu yang jadi patokan buat koreksi nama
-  // field selanjutnya (makanya pesan error asli dari server ditampilkan ke
-  // pengguna, bukan cuma "gagal").
+  // Endpoint & nama field mengikuti apa yang diterima API server LKH (tak ada
+  // dokumentasi publik). Kalau server menolak dengan pesan validasi tertentu,
+  // itu jadi patokan koreksi - makanya pesan error asli server ditampilkan ke
+  // pengguna, bukan sekadar "gagal".
   const SIMPAN_LKH_URL = `${API_BASE}/api/simpan-lkh`;
 
   const syncOneRecord = async (
@@ -756,12 +740,10 @@ export default function LKHScreen() {
     }
 
     const formData = new FormData();
-    // Payload PERSIS seperti request simpan_lkh yang TERBUKTI berhasil di
-    // server (terlihat di tabel logging dari app resmi mahasiswa lain):
-    //   {pengguna_id, kode, koordinat, waktu} + foto
-    // TANPA program_id / deskripsi - server menerima presensi tanpa keduanya.
-    // Karena itu app ini tidak lagi butuh /api/program (yang error di server);
-    // presensi cukup dikirim seperti ini. pengguna_id = id NUMERIK, bukan nim.
+    // Payload yang diterima endpoint simpan-lkh: {pengguna_id, kode, koordinat,
+    // waktu} + foto. TANPA program_id / deskripsi - server menerima presensi
+    // tanpa keduanya, jadi app tak butuh /api/program. pengguna_id = id NUMERIK,
+    // bukan nim.
     formData.append("pengguna_id", penggunaId);
     formData.append("kode", record.kode || generateLocalRecordCode());
     formData.append("koordinat", record.koordinat || "");
@@ -956,11 +938,9 @@ export default function LKHScreen() {
               <Image
                 source={{
                   uri: userData.fotoUrl,
-                  // Header (Bearer + UA Dart) HANYA untuk URL remote http(s):
-                  // endpoint foto butuh token & WAF Cloudflare memblokir non-
-                  // Dart. Untuk file:// lokal (setelah ter-download), mengirim
-                  // header malah membuat Image Android GAGAL - itulah sebab foto
-                  // muncul sebentar lalu hilang jadi inisial.
+                  // Header (Bearer + User-Agent yang diharapkan server) hanya
+                  // untuk URL remote http(s): endpoint foto butuh token & UA
+                  // itu. Dikirim bersyarat agar tetap aman untuk uri non-http.
                   ...(userData.fotoUrl.startsWith("http")
                     ? { headers: profilePhotoHeaders(token) }
                     : {}),

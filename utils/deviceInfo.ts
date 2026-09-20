@@ -16,10 +16,9 @@ import * as Device from "expo-device";
 export const APP_VERSION = "1.1.1";
 
 /**
- * User-Agent yang sesuai dengan klien resmi. WAF di depan server hanya
- * meneruskan request dengan User-Agent Dart; tanpa header ini request tidak
- * sampai ke backend (mengembalikan halaman HTML). Setiap request - fetch()
- * maupun sumber <Image> - harus mengirim header ini.
+ * User-Agent yang diharapkan API server LKH. Server (di balik WAF) menolak
+ * request tanpa header ini dan membalas halaman HTML, bukan JSON. Setiap
+ * request - fetch() maupun sumber <Image> - harus mengirimkannya.
  */
 export const API_USER_AGENT = "Dart/3.8 (dart:io)";
 

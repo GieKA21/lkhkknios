@@ -167,9 +167,9 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
               <Image
                 source={{
                   uri: profileData.serverFotoUrl,
-                  // Header (Bearer + UA Dart) HANYA untuk URL remote http(s).
-                  // Untuk file:// lokal (setelah ter-download) header malah
-                  // membuat Image Android gagal -> foto hilang jadi inisial.
+                  // Header (Bearer + User-Agent yang diharapkan server) hanya
+                  // untuk URL remote http(s); dikirim bersyarat agar aman untuk
+                  // uri non-http.
                   ...(profileData.serverFotoUrl.startsWith("http")
                     ? { headers: profilePhotoHeaders(token) }
                     : {}),

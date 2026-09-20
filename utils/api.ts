@@ -26,9 +26,8 @@ import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
 //          di jaringan kampus / VPN dosen.
 //
 // Akun KKN aktif mahasiswa ada di PROD, jadi prod adalah default yang benar.
-// Endpoint wajah & pembimbing yang direkonstruksi ada di prod juga (semua
-// dari APK yang menembak prod). Ganti ke dev hanya untuk uji di jaringan
-// kampus - cukup satu baris di bawah.
+// Endpoint wajah & pembimbing juga ada di prod. Ganti ke dev hanya untuk uji
+// di jaringan kampus - cukup satu baris di bawah.
 export const API_BASE = "https://lkh-kkn.uin-alauddin.ac.id";
 
 /** Server membalas HTML, bukan JSON - token kadaluarsa atau diblokir WAF. */
@@ -78,8 +77,8 @@ function authHeaders(token: string, extra?: Record<string, string>) {
  * Baca respons, deteksi HTML, bongkar amplop {statusCode, data, desc}.
  * Melempar SessionExpiredError untuk HTML dan ApiError untuk penolakan yang
  * formatnya benar - pesan asli server dipertahankan apa adanya, karena
- * itulah satu-satunya petunjuk saat nama field harus dikoreksi (API ini
- * direkonstruksi dari APK, bukan dari dokumentasi).
+ * itulah satu-satunya petunjuk saat nama field harus dikoreksi (tak ada
+ * dokumentasi API publik).
  */
 async function unwrap<T>(response: Response): Promise<T> {
   const text = await response.text();

@@ -46,7 +46,7 @@ const PATH_RESET_MAX = "/api/max-reset";
 // aplikasi jatuh ke cache lokal - itulah sebab kuota reset "tidak berubah"
 // walau sudah diedit di database.
 
-/** Nama field payload wajah. Satu-satunya kandidat yang muncul di libapp.so. */
+/** Nama field payload wajah yang diterima endpoint face-data server. */
 const FIELD_FACE_DATA = "face_data";
 
 export interface ServerResetInfo {
