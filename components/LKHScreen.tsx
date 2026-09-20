@@ -1108,20 +1108,19 @@ export default function LKHScreen() {
             )}
           </View>
         </View>
-
-        {/* Tombol sinkron manual (seperti di iOS) - selalu tersedia sebagai
-            escape-hatch untuk mendorong laporan offline ke server, di samping
-            sinkron-otomatis senyap yang jalan sendiri saat ada laporan baru. */}
-        <TouchableOpacity
-          style={styles.syncButton}
-          onPress={confirmSync}
-          activeOpacity={0.85}
-          disabled={isSyncing}
-        >
-          <FontAwesome5 name="sync-alt" size={14} color="#0E783D" />
-          <Text style={styles.syncButtonText}>Sinkronkan Data</Text>
-        </TouchableOpacity>
       </ScrollView>
+
+      {/* Tombol sinkron MELAYANG (FAB) di pojok kanan bawah - ikon saja, seperti
+          build 30. Sengaja SIBLING dari ScrollView (bukan di dalamnya) supaya
+          menempel di layar & tidak ikut ter-scroll. */}
+      <TouchableOpacity
+        style={styles.fabButton}
+        onPress={confirmSync}
+        activeOpacity={0.8}
+        disabled={isSyncing}
+      >
+        <FontAwesome5 name="sync-alt" size={18} color="#FFF" />
+      </TouchableOpacity>
 
       <Modal transparent visible={isSyncing} animationType="fade">
         <View style={styles.modalLoadingOverlay}>
@@ -1490,27 +1489,27 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 13,
   },
-  // Tombol sinkron in-flow (menggantikan FAB mengambang lama yang menimpa
-  // tombol absen & legenda). Gaya "outline" hijau supaya sekunder terhadap
-  // tombol absen utama, tapi tetap jelas & berlabel.
-  syncButton: {
-    flexDirection: "row",
-    alignItems: "center",
+  // Tombol sinkron MELAYANG (FAB) di pojok kanan bawah - ikon saja, seperti
+  // build 30. Diposisikan absolute sebagai sibling ScrollView supaya tetap
+  // menempel di layar (tidak ikut ter-scroll).
+  fabButton: {
+    position: "absolute",
+    right: 20,
+    // Tab bar melayang (app/(tabs)/index.tsx) menempati ~14-76px dari bawah
+    // layar (bottom:14 + tinggi 62) - FAB digeser ke atas secukupnya supaya
+    // lolos, tapi tetap di pojok kanan bawah.
+    bottom: 90,
+    backgroundColor: ACCENT,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     justifyContent: "center",
-    alignSelf: "center",
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 22,
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: ACCENT,
-    backgroundColor: "rgba(14,120,61,0.06)",
-  },
-  syncButtonText: {
-    color: ACCENT,
-    fontWeight: "700",
-    fontSize: 14,
-    marginLeft: 8,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 5,
   },
   modalLoadingOverlay: {
     flex: 1,
