@@ -1,3 +1,5 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
 import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
 
 /**
@@ -171,6 +173,80 @@ export function profilePhotoHeaders(token: string): Record<string, string> {
   return token
     ? { Authorization: `Bearer ${token}`, "User-Agent": API_USER_AGENT }
     : { "User-Agent": API_USER_AGENT };
+}
+
+/** Unduh foto profil ke berkas lokal (butuh header token); null kalau gagal. */
+async function downloadProfilePhoto(
+  url: string,
+  token: string,
+  fileName: string,
+): Promise<string | null> {
+  try {
+    const { uri, status } = await FileSystem.downloadAsync(
+      url,
+      FileSystem.documentDirectory + fileName,
+      { headers: { ...profilePhotoHeaders(token), "Accept-Encoding": "gzip" } },
+    );
+    return status === 200 ? uri : null;
+  } catch {
+    return null;
+  }
+}
+
+// Kenapa foto di-cache ke berkas lokal: endpoint foto (/api/profil-peserta)
+// butuh token & ada di balik WAF. Kalau <Image> menariknya LANGSUNG dari URL
+// remote setiap kali layar (LKH/Profil) di-mount, iOS menarik ULANG tiap mount,
+// dan penarikan berulang itu sering gagal (WAF/rate-limit) sehingga foto
+// berkedip jadi inisial. Solusinya: unduh SEKALI ke berkas lokal, lalu semua
+// layar menampilkan berkas lokal itu - tak ada penarikan remote berulang.
+const PHOTO_SRC_URL_KEY = "@profile_photo_src_url";
+const PHOTO_LOCAL_URI_KEY = "@profile_photo_local_uri";
+
+/**
+ * URI berkas LOKAL foto profil (di-cache). Mengunduh dari `remoteUrl` sekali
+ * (mengunduh ulang hanya bila URL sumbernya berubah), lalu memakai ulang berkas
+ * lokalnya. Mengembalikan null bila unduhan gagal - pemanggil bisa jatuh ke URL
+ * remote atau avatar inisial.
+ */
+export async function getCachedProfilePhoto(
+  remoteUrl: string,
+  token: string,
+): Promise<string | null> {
+  try {
+    const [srcUrl, localUri] = await Promise.all([
+      AsyncStorage.getItem(PHOTO_SRC_URL_KEY),
+      AsyncStorage.getItem(PHOTO_LOCAL_URI_KEY),
+    ]);
+    if (srcUrl === remoteUrl && localUri) {
+      const info = await FileSystem.getInfoAsync(localUri);
+      if (info.exists) return localUri;
+    }
+    const local = await downloadProfilePhoto(
+      remoteUrl,
+      token,
+      "profile_photo.jpg",
+    );
+    if (local) {
+      await AsyncStorage.multiSet([
+        [PHOTO_SRC_URL_KEY, remoteUrl],
+        [PHOTO_LOCAL_URI_KEY, local],
+      ]);
+      return local;
+    }
+  } catch {
+    // best-effort - pemanggil jatuh ke URL remote / inisial
+  }
+  return null;
+}
+
+/** Bersihkan cache foto lokal - dipanggil saat logout supaya akun berikutnya
+ *  tidak memakai foto akun sebelumnya. */
+export async function clearCachedProfilePhoto(): Promise<void> {
+  try {
+    await AsyncStorage.multiRemove([PHOTO_SRC_URL_KEY, PHOTO_LOCAL_URI_KEY]);
+  } catch {
+    // abaikan
+  }
 }
 
 export async function apiPostForm<T>(

@@ -9,6 +9,7 @@ import {
     Dimensions,
     Image,
     Modal,
+    Platform,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -46,6 +47,7 @@ import {
 import { APP_VERSION, API_USER_AGENT, getDeviceInfoStr } from "../utils/deviceInfo";
 import {
     API_BASE,
+    getCachedProfilePhoto,
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
@@ -367,11 +369,20 @@ export default function LKHScreen() {
           settingTanggalSelesai: data.settingTanggalSelesai || null,
         });
 
-        // SENGAJA tidak lagi men-download foto ke file lokal lalu menukar URL-
-        // nya: hasil unduhan (file://) sering gagal dibaca Image di Android,
-        // sehingga foto yang tadinya tampil dari URL remote malah HILANG jadi
-        // inisial beberapa detik kemudian. URL remote (http + header token)
-        // sudah termuat & di-cache Image dengan andal - biarkan apa adanya.
+        // iOS SAJA: unduh foto SEKALI ke berkas lokal lalu tampilkan dari lokal.
+        // Di iOS <Image> menarik ULANG foto dari URL remote tiap layar di-mount,
+        // dan penarikan berulang itu sering gagal (endpoint di balik WAF + butuh
+        // token) -> foto berkedip jadi inisial. Berkas lokal tampil andal. Di
+        // Android URL remote sudah bekerja & di-cache dengan andal, jadi tak
+        // diubah. Kalau unduh gagal, URL remote (di atas) jadi fallback.
+        if (Platform.OS === "ios" && dbFotoUrl && savedToken) {
+          getCachedProfilePhoto(dbFotoUrl, savedToken).then((localUri) => {
+            if (localUri) {
+              setPhotoFailed(false);
+              setUserData((prev) => ({ ...prev, fotoUrl: localUri }));
+            }
+          });
+        }
       }
     } catch (e) {
       console.error("Gagal membaca data profil", e);

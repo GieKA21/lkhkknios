@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
     Alert,
     Image,
+    Platform,
     SafeAreaView,
     ScrollView,
     StyleSheet,
@@ -18,6 +19,8 @@ import {
     type ResetQuota,
 } from "../utils/faceEnrollment";
 import {
+    clearCachedProfilePhoto,
+    getCachedProfilePhoto,
     profilePhotoHeaders,
     profilePhotoUrl,
 } from "../utils/api";
@@ -114,10 +117,18 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
           serverFotoUrl: dbFotoUrl,
         });
 
-        // Tidak men-download foto ke file lokal lalu menukar URL-nya: hasil
-        // unduhan (file://) sering gagal dibaca Image di Android -> foto tampil
-        // sebentar lalu HILANG jadi inisial. URL remote (http + header token)
-        // sudah termuat & di-cache andal.
+        // iOS SAJA (lihat catatan sama di LKHScreen): unduh foto SEKALI ke
+        // berkas lokal lalu tampilkan dari lokal, karena di iOS <Image> menarik
+        // ulang foto tiap mount & sering gagal -> berkedip jadi inisial. Android
+        // pakai URL remote (sudah andal). Kalau gagal, URL remote jadi fallback.
+        if (Platform.OS === "ios" && dbFotoUrl && savedToken) {
+          getCachedProfilePhoto(dbFotoUrl, savedToken).then((localUri) => {
+            if (localUri) {
+              setPhotoFailed(false);
+              setProfileData((prev) => ({ ...prev, serverFotoUrl: localUri }));
+            }
+          });
+        }
       }
     } catch (e) {
       console.error("Gagal load biodata", e);
@@ -260,6 +271,9 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                   // benar berakhir saat logout dan login asli berikutnya tidak
                   // diam-diam masih membypass gerbang periode/geofence.
                   await AsyncStorage.removeItem("@demo_mode");
+                  // Buang cache foto profil lokal supaya akun berikutnya tidak
+                  // memakai foto akun sebelumnya.
+                  await clearCachedProfilePhoto();
                   // Logout SENGAJA tidak menghapus wajah terdaftar.
                   // Aplikasi ini dipakai di perangkat pribadi mahasiswa
                   // sendiri (lihat PANDUAN-BUILD-IPA.md / alur sideload
