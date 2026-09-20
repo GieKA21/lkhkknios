@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -94,7 +95,19 @@ export default function Index() {
             onPress={() => setCurrentTab("lkh")}
             activeOpacity={0.75}
           >
-            <View style={[styles.tabPill, currentTab === "lkh" && styles.tabPillActive]}>
+            <View
+              style={[
+                styles.tabPill,
+                Platform.OS !== "android" &&
+                  currentTab === "lkh" &&
+                  styles.tabPillActive,
+              ]}
+            >
+              {/* Android: latar aktif = lapisan absolute terpisah (lihat catatan
+                  di style tabPillActiveBg). iOS pakai tabPillActive di pil. */}
+              {Platform.OS === "android" && currentTab === "lkh" && (
+                <View style={styles.tabPillActiveBg} />
+              )}
               <FontAwesome5
                 name="calendar-alt"
                 size={17}
@@ -117,8 +130,16 @@ export default function Index() {
             activeOpacity={0.75}
           >
             <View
-              style={[styles.tabPill, currentTab === "profile" && styles.tabPillActive]}
+              style={[
+                styles.tabPill,
+                Platform.OS !== "android" &&
+                  currentTab === "profile" &&
+                  styles.tabPillActive,
+              ]}
             >
+              {Platform.OS === "android" && currentTab === "profile" && (
+                <View style={styles.tabPillActiveBg} />
+              )}
               <Ionicons
                 name="person"
                 size={18}
@@ -210,17 +231,9 @@ const styles = StyleSheet.create({
     // native tanpa perlu overflow:hidden (itu cuma perlu untuk meng-clip ANAK
     // yang keluar bidang, sedangkan ikon+teks di sini selalu di tengah).
   },
-  // Aksen "liquid glass" hijau: bukan hijau solid, tapi kaca tipis
-  // berwarna hijau dengan tepi menyala lembut, seperti tetesan cairan.
-  //
-  // TANPA elevation (bayangan Android) - SENGAJA. Di Android New Architecture
-  // (Fabric), View yang punya `elevation` dipromosikan ke layer render sendiri;
-  // saat pil berpindah aktif->non-aktif, elevation dicabut dan view turun ke
-  // layer induk (yang ber-overflow:hidden), tetapi Fabric GAGAL menggambar
-  // ulang anak-anaknya (ikon+teks) sehingga tab non-aktif tampak KOSONG. Cukup
-  // pakai warna latar + border sebagai penanda aktif. Bayangan iOS (shadow*)
-  // tetap dipertahankan - iOS memakai shadow*, bukan elevation, dan tidak kena
-  // bug ini.
+  // Aksen hijau pil AKTIF - HANYA iOS (di-inline ke pil). Membulat dari
+  // borderRadius base tabPill; shadow* memberi glow halus (iOS memakai shadow*,
+  // bukan elevation). iOS tidak kena bug render Fabric Android.
   tabPillActive: {
     backgroundColor: "rgba(16,185,129,0.22)",
     borderWidth: 1,
@@ -229,6 +242,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.5,
     shadowRadius: 10,
+  },
+  // Aksen hijau pil AKTIF di ANDROID - digambar sebagai lapisan ABSOLUTE
+  // terpisah di BELAKANG ikon+teks, bukan sebagai style pil itu sendiri.
+  // Kenapa: di Android Fabric ada dua bug pil yang saling bertolak belakang -
+  // (1) dengan overflow:hidden, ikon+teks tab NON-AKTIF hilang setelah transisi;
+  // (2) tanpa overflow:hidden, latar pil AKTIF dirender KOTAK begitu pil
+  // di-update ulang. Lapisan absolute ini mengakali keduanya: ia hanya dirender
+  // saat aktif -> SELALU mount BARU -> borderRadius diterapkan benar (bug kotak
+  // cuma muncul saat UPDATE view yang persist, bukan saat MOUNT). Ia juga TANPA
+  // anak -> tak ada isu "anak hilang". Ikon+teks tetap di lapisan atas & tak
+  // pernah di-clip, jadi selalu tampil.
+  tabPillActiveBg: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(16,185,129,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(16,185,129,0.55)",
+    borderRadius: 22,
   },
   tabText: {
     fontSize: 13,
