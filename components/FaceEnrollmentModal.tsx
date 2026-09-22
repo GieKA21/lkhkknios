@@ -6,6 +6,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -79,7 +80,13 @@ export default function FaceEnrollmentModal({
   // 15fps + low-light boost: alasan lengkap ada di LKHScreen - selama ada
   // stream frame, iOS membatasi exposure ke satu durasi frame, jadi 30fps
   // membuat preview gelap di ruangan yang cahayanya sebenarnya cukup.
-  const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
+  // iOS SAJA. Di Android, memaksa fps mengharuskan VisionCamera menemukan
+  // format yang mendukungnya persis; kalau tidak ada, sesi kamera gagal
+  // dikonfigurasi dan preview tinggal HITAM. Biarkan Android memilih sendiri.
+  const cameraConstraints = useMemo(
+    () => (Platform.OS === "ios" ? [{ fps: 15 }] : undefined),
+    [],
+  );
 
   const [captures, setCaptures] = useState<CaptureSlot[]>([]);
   const [isProcessingFace, setIsProcessingFace] = useState(false);
@@ -195,7 +202,7 @@ export default function FaceEnrollmentModal({
             isActive={visible}
             outputs={cameraOutputs}
             constraints={cameraConstraints}
-            enableLowLightBoost
+            enableLowLightBoost={Platform.OS === "ios"}
           />
         ) : (
           <View style={[styles.camera, styles.permissionPane]}>

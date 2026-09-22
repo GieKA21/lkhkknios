@@ -219,7 +219,13 @@ export default function LKHScreen() {
   // durasi frame (1/30 dtk @30fps), jadi preview lebih gelap. 15fps
   // menggandakan batas exposure (2x lebih terang) & memangkas separuh callback
   // onFacesDetected ke thread JS - tantangan gerak kepala tak butuh 30fps.
-  const cameraConstraints = useMemo(() => [{ fps: 15 }], []);
+  // iOS SAJA. Di Android, memaksa fps mengharuskan VisionCamera menemukan
+  // format yang mendukungnya persis; kalau tidak ada, sesi kamera gagal
+  // dikonfigurasi dan preview tinggal HITAM. Biarkan Android memilih sendiri.
+  const cameraConstraints = useMemo(
+    () => (Platform.OS === "ios" ? [{ fps: 15 }] : undefined),
+    [],
+  );
   const faceQualityGate = useFaceQualityGate();
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
@@ -1121,10 +1127,10 @@ export default function LKHScreen() {
               isActive={isCameraVisible}
               outputs={cameraOutputs}
               constraints={cameraConstraints}
-              // Low-light boost bawaan iOS (AVCaptureDevice): menaikkan
-              // sensitivitas otomatis saat gelap, dan tidak berefek saat
-              // cahaya sudah cukup - aman dipasang permanen.
-              enableLowLightBoost
+              // iOS SAJA - ini fitur AVCaptureDevice. Di Android, meminta
+              // low-light boost pada perangkat yang tidak mendukungnya membuat
+              // sesi kamera gagal dikonfigurasi -> preview HITAM.
+              enableLowLightBoost={Platform.OS === "ios"}
               onFacesDetected={handleCameraFaces}
               onError={faceQualityGate.onFaceDetectionError}
               performanceMode="fast"

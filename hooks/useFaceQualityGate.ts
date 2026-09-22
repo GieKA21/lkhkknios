@@ -69,7 +69,12 @@ export function useFaceQualityGate() {
   }, []);
 
   const onFaceDetectionError = useCallback((error: Error) => {
-    console.error("Gagal mendeteksi wajah (live preview)", error);
+    console.error("Kamera / deteksi wajah bermasalah", error);
+    // Tampilkan sebabnya di panduan layar. Tanpa ini, kegagalan konfigurasi
+    // sesi kamera hanya terlihat sebagai preview HITAM tanpa penjelasan apa
+    // pun - dan di build release console.error tidak terlihat sama sekali.
+    setIsReady(false);
+    setMessage(`Kamera bermasalah: ${error.message}`);
   }, []);
 
   return { isReady, message, onFacesDetected, onFaceDetectionError };
