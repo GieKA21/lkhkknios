@@ -378,9 +378,16 @@ export default function LKHScreen() {
   // terpotong?) tanpa perlu Console.app. Hapus setelah root cause ketemu.
   const [debugPhotoUri, setDebugPhotoUri] = useState<string | null>(null);
   const [isCheckingLocation, setIsCheckingLocation] = useState(false);
-  // True kalau foto profil gagal dimuat (URL 404 / jaringan) - render jatuh
+  // URI foto profil yang TERBUKTI gagal dimuat (404 / jaringan) - render jatuh
   // ke avatar inisial alih-alih lingkaran kosong.
-  const [photoFailed, setPhotoFailed] = useState(false);
+  //
+  // Sengaja menyimpan URI-nya, bukan boolean. Layar ini di-mount ULANG setiap
+  // pindah tab (app/(tabs)/index.tsx merender bersyarat, bukan memakai
+  // navigator), dan fotoUrl berganti dari URL remote ke berkas lokal di tengah
+  // jalan. Dengan boolean, onError milik URL LAMA yang datang terlambat ikut
+  // mematikan URI BARU yang sebenarnya sehat, dan karena efeknya cuma jalan
+  // saat mount tidak ada yang meresetnya - avatar terkunci jadi inisial.
+  const [failedPhotoUri, setFailedPhotoUri] = useState<string | null>(null);
   // Guard agar sinkron-otomatis (pengganti tombol manual) hanya dicoba sekali
   // per sesi layar, bukan tiap render / saat sebagian gagal.
   const autoSyncTriedRef = useRef(false);
@@ -455,13 +462,21 @@ export default function LKHScreen() {
         // 404 lalu lingkaran kosong. Tanpa foto, fotoUrl dikosongkan dan
         // render menampilkan avatar inisial.
         const dbFotoUrl = data.foto ? profilePhotoUrl(data.foto) : "";
-        setPhotoFailed(false);
+        setFailedPhotoUri(null);
+
+        // Di iOS fotoUrl SENGAJA dikosongkan dulu, bukan diisi URL remote.
+        // Tarikan remote di iOS hampir selalu ditolak (endpoint di balik WAF +
+        // butuh token), dan onError-nya datang setelah berkas lokal terpasang
+        // - itu akar bug "foto hilang setelah pindah tab". Berkas lokal hasil
+        // cache dipasang di bawah; kalau cache gagal, barulah URL remote
+        // dipakai sebagai cadangan.
+        const fotoAwal = Platform.OS === "ios" ? "" : dbFotoUrl;
 
         setUserData({
           nama: data.nama,
           nim: data.nim,
           prodi: data.prodi,
-          fotoUrl: dbFotoUrl,
+          fotoUrl: fotoAwal,
           kecamatan: data.kecamatan || null,
           kabupaten: data.kabupaten || null,
           poskoKoordinat: data.poskoKoordinat || null,
@@ -479,10 +494,10 @@ export default function LKHScreen() {
         // diubah. Kalau unduh gagal, URL remote (di atas) jadi fallback.
         if (Platform.OS === "ios" && dbFotoUrl && savedToken) {
           getCachedProfilePhoto(dbFotoUrl, savedToken).then((localUri) => {
-            if (localUri) {
-              setPhotoFailed(false);
-              setUserData((prev) => ({ ...prev, fotoUrl: localUri }));
-            }
+            // Cache gagal -> jatuh ke URL remote, biar tetap ada peluang tampil.
+            const uri = localUri || dbFotoUrl;
+            setFailedPhotoUri(null);
+            setUserData((prev) => ({ ...prev, fotoUrl: uri }));
           });
         }
       }
@@ -1050,21 +1065,6 @@ export default function LKHScreen() {
     hasEnrollment &&
     (todayRecord?.status === "synced" || todayRecord?.status === "unsynced");
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.glassShadow}>
-          <View style={styles.profileCard}>
-            {userData.fotoUrl && !photoFailed ? (
-              <Image
-                source={{
-                  uri: userData.fotoUrl,
-                  // Header (Bearer + User-Agent yang diharapkan server) hanya
-                  // untuk URL remote http(s): endpoint foto butuh token & UA
-                  // itu. Dikirim bersyarat agar tetap aman untuk uri non-http.
-                  ...(userData.fotoUrl.startsWith("http")
-                    ? { headers: profilePhotoHeaders(token) }
-                    : {}),
   // Isi layar kamera absen, dipakai dua kali: sebagai lapisan biasa di
   // Android dan sebagai isi <Modal> di iOS (lihat komentar di bawah).
   // View polos + inset eksplisit, bukan SafeAreaView - alasan lengkap ada di
@@ -1239,9 +1239,43 @@ export default function LKHScreen() {
         </View>
   );
 
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* SafeAreaView dari react-native hanya bekerja di iOS; di Android ia
+          View biasa tanpa inset, sehingga kartu teratas mepet ke jam dan
+          indikator jaringan. Inset ditambahkan ke KONTEN yang digulir saja,
+          bukan ke container, supaya lapisan penuh layar (mis. kamera) tetap
+          menutupi layar sampai ke tepi atas. */}
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          Platform.OS === "android" && {
+            paddingTop: insets.top + 16,
+            // Tab bar mengambang ikut naik setinggi inset bawah (lihat
+            // tabBarBottom di app/(tabs)/index.tsx), jadi ruang bawah konten
+            // harus naik sebanyak itu juga - kalau tidak, legenda dan tombol
+            // sinkron justru tertutup tab bar yang baru.
+            paddingBottom: 110 + insets.bottom,
+          },
+        ]}
+      >
+        <View style={styles.glassShadow}>
+          <View style={styles.profileCard}>
+            {userData.fotoUrl && failedPhotoUri !== userData.fotoUrl ? (
+              <Image
+                source={{
+                  uri: userData.fotoUrl,
+                  // Header (Bearer + User-Agent yang diharapkan server) hanya
+                  // untuk URL remote http(s): endpoint foto butuh token & UA
+                  // itu. Dikirim bersyarat agar tetap aman untuk uri non-http.
+                  ...(userData.fotoUrl.startsWith("http")
+                    ? { headers: profilePhotoHeaders(token) }
+                    : {}),
                 }}
                 style={styles.profileImage}
-                onError={() => setPhotoFailed(true)}
+                // Catat URI-nya, bukan sekadar "gagal": galat milik URI lama
+                // tidak boleh mematikan URI baru (lihat failedPhotoUri).
+                onError={() => setFailedPhotoUri(userData.fotoUrl)}
               />
             ) : (
               <View style={[styles.profileImage, styles.profileAvatarFallback]}>
