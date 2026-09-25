@@ -20,6 +20,21 @@ import { API_BASE } from "../utils/api";
 import { fetchPembimbing } from "../utils/pembimbingApi";
 import Constants from "expo-constants";
 
+/**
+ * Hapus seluruh jejak sesi. Dipanggil saat login DITOLAK karena perannya tidak
+ * cocok, supaya tidak ada token/profil separuh jadi yang tertinggal dan dipakai
+ * layar berikutnya.
+ */
+async function hapusSesi() {
+  await AsyncStorage.multiRemove([
+    "@user_token",
+    "@user_nim",
+    "@user_role",
+    "@user_profile",
+    "@user_id",
+  ]);
+}
+
 export default function LoginScreen({ onLoginSuccess }) {
   const [activeTab, setActiveTab] = useState("peserta");
   const [nim, setNim] = useState("");
@@ -88,12 +103,13 @@ export default function LoginScreen({ onLoginSuccess }) {
       }
 
       if (response.ok && result.token) {
-        await AsyncStorage.setItem("@user_token", result.token);
-        await AsyncStorage.setItem("@user_nim", nim);
-        // Peran menentukan layar setelah login (lihat app/(tabs)/index.tsx).
-        await AsyncStorage.setItem("@user_role", "peserta");
+        // Sesi SENGAJA belum ditulis di sini. /auth/get-token hanya memeriksa
+        // kredensial dan TIDAK membedakan peran, jadi kalau peran ditulis
+        // sebelum diverifikasi, NIP dosen ikut masuk sebagai peserta. Sesi
+        // baru ditulis setelah /api/peserta membuktikan akun ini peserta.
 
-        // 2. Ambil data profil HANYA dari endpoint /api/peserta
+        // 2. Ambil data profil HANYA dari endpoint /api/peserta - sekaligus
+        //    menjadi bukti peran.
         try {
           const pesertaRes = await fetch(
             `${API_BASE}/api/peserta?nim=${nim}&device_info=${encodeURIComponent(deviceInfoStr)}&version=${APP_VERSION}`,
@@ -156,43 +172,40 @@ export default function LoginScreen({ onLoginSuccess }) {
               wilayahId: data.wilayahKel?.id ?? data.wilayahKec?.id ?? null,
             };
 
-            await AsyncStorage.setItem(
-              "@user_profile",
-              JSON.stringify(combinedProfile),
-            );
+            // Peran terbukti - sesi ditulis sekaligus di sini, bukan sebelum
+            // pemeriksaan.
+            await AsyncStorage.multiSet([
+              ["@user_token", result.token],
+              ["@user_nim", nim],
+              // Peran menentukan layar setelah login (lihat app/(tabs)/index.tsx).
+              ["@user_role", "peserta"],
+              ["@user_profile", JSON.stringify(combinedProfile)],
+            ]);
             // Kunci id numerik untuk endpoint wajah (lihat komentar di atas).
             if (data.id != null) {
               await AsyncStorage.setItem("@user_id", String(data.id));
             }
           } else {
-            throw new Error("Format respons API peserta tidak sesuai");
+            throw new Error(
+              pesertaJson.desc ||
+                pesertaJson.message ||
+                "Akun tidak ditemukan pada data peserta",
+            );
           }
         } catch (err) {
-          console.error(
-            "Gagal mengunduh profil, menggunakan data fallback:",
-            err,
+          // Dulu di sini ada profil cadangan "Peserta KKN" dan login TETAP
+          // diteruskan. Itulah yang membuat NIP dosen bisa masuk sebagai
+          // mahasiswa: /api/peserta menolak NIP, lalu profil cadangan menutupi
+          // penolakan itu. Sekarang login dibatalkan dan sesi dibersihkan.
+          console.error("Verifikasi peran peserta gagal:", err);
+          await hapusSesi();
+          Alert.alert(
+            "Gagal Login",
+            "Akun ini tidak terdaftar sebagai peserta KKN. Bila Anda dosen " +
+              "pembimbing, masuk lewat tab Pembimbing.\n\n" +
+              `[debug] ${err?.message ?? err}`,
           );
-          const defaultProfile = {
-            nim: nim,
-            nama: "Peserta KKN",
-            foto: "274131.jpg",
-            tglLahir: "",
-            prodi: "",
-            fakultas: "",
-            tahunMasuk: "",
-            angkatan: "",
-            kecamatan: "",
-            kabupaten: "",
-            poskoKoordinat: null,
-            angkatanTanggalMulai: null,
-            angkatanTanggalSelesai: null,
-            settingTanggalMulai: null,
-            settingTanggalSelesai: null,
-          };
-          await AsyncStorage.setItem(
-            "@user_profile",
-            JSON.stringify(defaultProfile),
-          );
+          return;
         }
 
         Alert.alert("Berhasil", "Login Berhasil!", [
@@ -272,17 +285,27 @@ export default function LoginScreen({ onLoginSuccess }) {
         return;
       }
 
-      await AsyncStorage.setItem("@user_token", result.token);
-      await AsyncStorage.setItem("@user_nim", nim);
-      await AsyncStorage.setItem("@user_role", "pembimbing");
+      // Sesi belum ditulis di sini - sama alasannya dengan sisi peserta:
+      // get-token tidak membedakan peran, jadi peran harus dibuktikan dulu.
 
       // Profil pembimbing: /api/pembimbing mengembalikan id/kode/nama/pegFoto
       // + pegTglLahir, angkatan, peran, prodi.fakultas (lihat ProfilDosenScreen).
       try {
         const p = await fetchPembimbing(nim, result.token);
+        // Pemeriksaan bentuk data ini WAJIB eksplisit. unwrap() di utils/api.ts
+        // mengembalikan AMPLOP respons saat `data` null (fallback
+        // `parsed.data ?? parsed`, dipakai endpoint tanpa `data` seperti
+        // max-reset), jadi untuk NIM peserta fetchPembimbing TIDAK melempar
+        // galat - ia mengembalikan {statusCode, desc} yang lolos begitu saja
+        // dan dulu menjadi profil {nip: <NIM>, nama: "Pembimbing"}.
+        const sahih =
+          p && typeof p === "object" && p.nama && (p.id != null || p.kode);
+        if (!sahih) {
+          throw new Error("Respons tidak memuat data pembimbing");
+        }
         const profile = {
           nip: p.kode ?? nim,
-          nama: p.nama ?? "Pembimbing",
+          nama: p.nama,
           foto: p.pegFoto ?? p.foto ?? "",
           tglLahir: p.pegTglLahir ?? "",
           prodi: p.prodi?.nama ?? "",
@@ -290,15 +313,25 @@ export default function LoginScreen({ onLoginSuccess }) {
           angkatan: p.angkatan?.nama_angkatan?.toString() ?? "",
           peran: p.peran?.nama ?? "Dosen Pembimbing",
         };
-        await AsyncStorage.setItem("@user_profile", JSON.stringify(profile));
+        await AsyncStorage.multiSet([
+          ["@user_token", result.token],
+          ["@user_nim", nim],
+          ["@user_role", "pembimbing"],
+          ["@user_profile", JSON.stringify(profile)],
+        ]);
         if (p.id != null) await AsyncStorage.setItem("@user_id", String(p.id));
-      } catch (_profileErr) {
-        // Profil gagal diambil - tetap masuk dengan profil minimal supaya
-        // dashboard bisa mencoba menarik daftar bimbingan sendiri.
-        await AsyncStorage.setItem(
-          "@user_profile",
-          JSON.stringify({ nip: nim, nama: "Pembimbing", foto: "" }),
+      } catch (profileErr) {
+        // Dulu di sini ada profil minimal dan login tetap diteruskan - itu
+        // yang membuat NIM mahasiswa bisa masuk sebagai dosen.
+        console.error("Verifikasi peran pembimbing gagal:", profileErr);
+        await hapusSesi();
+        Alert.alert(
+          "Gagal Login",
+          "Akun ini tidak terdaftar sebagai dosen pembimbing. Bila Anda " +
+            "peserta KKN, masuk lewat tab Peserta.\n\n" +
+            `[debug] ${profileErr?.message ?? profileErr}`,
         );
+        return;
       }
 
       Alert.alert("Berhasil", "Login pembimbing berhasil!", [
