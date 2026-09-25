@@ -6,6 +6,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
 import {
   fetchPembimbingDates,
@@ -138,6 +140,7 @@ function parseDays(payload: unknown): Record<string, DayFill> {
 }
 
 export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
+  const insets = useSafeAreaInsets();
   const [nama, setNama] = useState("Memuat...");
   const [nip, setNip] = useState("");
   const [prodi, setProdi] = useState("");

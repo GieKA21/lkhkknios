@@ -12,6 +12,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
     getResetQuota,
     MAX_FACE_RESETS,
@@ -52,6 +53,7 @@ function initials(name: string): string {
 }
 
 export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
+  const insets = useSafeAreaInsets();
   const [profileData, setProfileData] = useState<ProfileData>({
     nim: "",
     nama: "Memuat...",

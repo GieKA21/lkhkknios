@@ -17,8 +17,18 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { CommonResolutions, useCameraDevice, useCameraPermission, usePhotoOutput } from "react-native-vision-camera";
-import { Camera as FaceDetectorCamera } from "react-native-vision-camera-face-detector";
+import { Camera, CommonResolutions, useCameraDevice, useCameraPermission, usePhotoOutput } from "react-native-vision-camera";
+// Sengaja TIDAK memakai <Camera> dari react-native-vision-camera-face-detector.
+// Pembungkus itu memanggil useFaceDetectorOutput(), yang di v2.0.6 memo-nya
+// rusak: `useMemo(..., [options])` sementara `options` adalah objek rest
+// (`...options`) yang SELALU dibuat baru tiap render, sehingga output detektor
+// tidak pernah stabil. VisionCamera membandingkan `outputs` per-elemen, jadi
+// output yang berganti identitas memicu session.configure() -> unbindAll() di
+// SETIAP render. Lihat catatan di faceDetectorOutput di bawah.
+// iOS TETAP memakai <FaceDetectorCamera> seperti semula - jalur itu sudah
+// teruji di iPhone dan sengaja TIDAK diubah. Jalur createFaceDetectorOutput()
+// di bawah hanya dipakai Android.
+import { Camera as FaceDetectorCamera, createFaceDetectorOutput } from "react-native-vision-camera-face-detector";
 import type { Face } from "react-native-vision-camera-face-detector";
 import {
     FACE_DETECTOR_OPTIONS,
@@ -214,7 +224,8 @@ export default function LKHScreen() {
     [],
   );
   const photoOutput = usePhotoOutput(photoConfig);
-  const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
+  // cameraOutputs dibentuk SETELAH handleCameraFaces (butuh output detektor
+  // wajah yang stabil) - lihat faceDetectorOutput di bawah.
   // PREVIEW GELAP: saat detektor wajah aktif, iOS membatasi exposure ke 1
   // durasi frame (1/30 dtk @30fps), jadi preview lebih gelap. 15fps
   // menggandakan batas exposure (2x lebih terang) & memangkas separuh callback
@@ -251,8 +262,93 @@ export default function LKHScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [faceQualityGate.onFacesDetected, liveness.onFacesDetected],
   );
+
+  // OUTPUT DETEKTOR WAJAH YANG STABIL - ini inti perbaikan "preview hitam" di
+  // Android.
+  //
+  // Gejalanya: preview hitam, foto gagal dengan
+  //   ImageCaptureException: Camera is closed
+  //     ... ProcessCameraProvider.unbindAll(...)
+  //     ... HybridCameraSession$configure$1.invokeSuspend
+  // padahal deteksi wajah & tantangan keaktifan tetap berjalan.
+  //
+  // Sebabnya BUKAN pengambilan fotonya, melainkan sesi kamera yang
+  // dikonfigurasi ULANG terus-menerus: VisionCamera membandingkan `outputs`
+  // per-elemen (useMemoizedArray), dan useFaceDetectorOutput() v2.0.6
+  // mengembalikan output baru di SETIAP render karena dependensi memo-nya
+  // adalah objek rest yang selalu baru. Tiap render -> configure() ->
+  // unbindAll() -> preview dirobohkan & permintaan jepret dibatalkan. Karena
+  // panduan di layar meng-setState ~9x/detik (FACE_TICK_MS), sesi praktis
+  // tidak pernah sempat hidup. Analisis frame tetap jalan, itu sebabnya
+  // deteksi wajah terlihat normal dan onError kamera tak pernah menyala.
+  //
+  // Maka output dibuat SEKALI di sini (deps []) memakai API publik
+  // createFaceDetectorOutput(), dengan callback dialirkan lewat ref supaya
+  // identitas outputnya tidak pernah berubah meski komponen render ulang.
+  const facesCallbackRef = useRef(handleCameraFaces);
+  facesCallbackRef.current = handleCameraFaces;
+  const cameraErrorRef = useRef(faceQualityGate.onFaceDetectionError);
+  cameraErrorRef.current = faceQualityGate.onFaceDetectionError;
+  // ANDROID SAJA. Di iOS output detektor tetap dibuat oleh
+  // <FaceDetectorCamera> seperti semula (null di sini = jalur iOS tak berubah).
+  const faceDetectorOutput = useMemo(
+    () =>
+      Platform.OS !== "android"
+        ? null
+        : createFaceDetectorOutput({
+        onFacesDetected: (faces) => facesCallbackRef.current(faces),
+        onError: (error) => cameraErrorRef.current(error),
+        performanceMode: "fast",
+        // DIAGNOSTIK (dipertahankan dari sebelumnya): landmark &
+        // classification live dimatikan untuk menghindari crash SIGSEGV MLKit
+        // di iOS 26. TIDAK memengaruhi pipeline foto still di
+        // utils/faceAuthNative.ts, yang tetap memakai FACE_DETECTOR_OPTIONS
+        // lengkap saat enroll/verify.
+        runLandmarks: false,
+        runClassifications: false,
+        minFaceSize: FACE_DETECTOR_OPTIONS.minFaceSize,
+      }),
+    [],
+  );
+  // Di Android outputs = [detektor wajah stabil, foto]; di iOS tetap hanya
+  // [foto], karena <FaceDetectorCamera> menyisipkan output detektornya sendiri
+  // persis seperti sebelumnya.
+  const cameraOutputs = useMemo(
+    () =>
+      faceDetectorOutput ? [faceDetectorOutput, photoOutput] : [photoOutput],
+    [faceDetectorOutput, photoOutput],
+  );
+
   const insets = useSafeAreaInsets();
   const [isCameraVisible, setIsCameraVisible] = useState(false);
+
+  // ANDROID SAJA - "preview hitam yang sebenarnya hidup".
+  // Gambarnya sudah mengalir (deteksi wajah jalan, foto hasil jepretan benar),
+  // tetapi permukaan preview tidak pernah digambar ke layar sampai ada sesuatu
+  // yang memaksa jendela menggambar ulang - terbukti karena preview baru
+  // muncul begitu dialog error tampil di atasnya. Maka setelah aliran preview
+  // benar-benar mulai (onPreviewStarted), tinggi view digeser 1px agar terjadi
+  // satu layout pass sehingga permukaannya ikut tergambar. Timer 600ms adalah
+  // jaring pengaman bila onPreviewStarted tidak menyala.
+  const [previewStarted, setPreviewStarted] = useState(false);
+  // Ukuran nyata view preview, dibaca dari onLayout - dipakai penanda
+  // diagnostik di bawah untuk memastikan view-nya memang punya ukuran.
+  const [previewBox, setPreviewBox] = useState({ width: 0, height: 0 });
+  // DIAGNOSTIK SEMENTARA (Android): pengalih mode render preview, supaya satu
+  // sesi uji bisa mencoba SurfaceView dan TextureView tanpa build ulang.
+  const [useTextureView, setUseTextureView] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (!isCameraVisible) {
+      setPreviewStarted(false);
+      return;
+    }
+    // TIDAK ADA timer cadangan di sini. Versi sebelumnya menyalakan penanda
+    // setelah 600 ms tanpa peduli apakah onPreviewStarted benar-benar menyala,
+    // sehingga penanda selalu menulis "mulai" dan menyembunyikan fakta bahwa
+    // aliran preview tidak pernah berjalan. Diagnostik yang berbohong lebih
+    // buruk daripada tidak ada diagnostik.
+  }, [isCameraVisible]);
   // Enrollment terpisah (FaceEnrollmentModal) - terbuka saat user mencoba
   // absen tanpa punya set wajah terdaftar. Menggantikan jalur lama di mana
   // foto absen pertama diam-diam menjadi wajah patokan.
@@ -721,7 +817,15 @@ export default function LKHScreen() {
       );
     } catch (error) {
       console.error("Gagal mengambil foto selfie", error);
-      Alert.alert("Error", "Gagal mengambil foto selfie.");
+      // ANDROID SAJA: pesan asli ikut ditampilkan, karena logcat tidak selalu
+      // bisa diambil dari HP pengguna dan tanpa ini kegagalan kamera hanya
+      // terlihat sebagai "Gagal mengambil foto selfie" tanpa petunjuk apa pun.
+      // Di iOS teksnya sengaja dibiarkan persis seperti semula.
+      const detail =
+        Platform.OS === "android" && error instanceof Error
+          ? `\n\n${error.name}: ${error.message}`
+          : "";
+      Alert.alert("Error", `Gagal mengambil foto selfie.${detail}`);
     } finally {
       setIsProcessingFace(false);
     }
@@ -961,6 +1065,180 @@ export default function LKHScreen() {
                   ...(userData.fotoUrl.startsWith("http")
                     ? { headers: profilePhotoHeaders(token) }
                     : {}),
+  // Isi layar kamera absen, dipakai dua kali: sebagai lapisan biasa di
+  // Android dan sebagai isi <Modal> di iOS (lihat komentar di bawah).
+  // View polos + inset eksplisit, bukan SafeAreaView - alasan lengkap ada di
+  // komentar header FaceEnrollmentModal. Singkatnya: tombol close yang duduk
+  // di dalam area status bar / Dynamic Island tidak menerima sentuhan.
+  const cameraSurface = (
+        <View style={styles.cameraContainer}>
+          {cameraDevice && (
+            Platform.OS === "android" ? (
+              // ===== ANDROID =====
+              <Camera
+                // Tinggi digeser 1px sampai preview mulai, lalu dikembalikan -
+                // memaksa satu layout pass agar permukaan preview tergambar.
+                style={[styles.camera, { bottom: previewStarted ? 0 : 1 }]}
+                device={cameraDevice}
+                isActive={isCameraVisible}
+                // Elemen array ini WAJIB stabil: VisionCamera membandingkan
+                // outputs per-elemen, dan elemen yang berganti identitas
+                // memicu configure() -> unbindAll(). Lihat faceDetectorOutput.
+                outputs={cameraOutputs}
+                // implementationMode SENGAJA tidak diisi -> PreviewView memakai
+                // mode bawaannya. Sebelumnya di sini ada "compatible"
+                // (TextureView) sebagai penangkal masalah <Modal>; modalnya
+                // kini sudah dihapus, dan setter implementationMode di
+                // HybridPreviewView memanggil connectPreviewOutput() TANPA
+                // memutus koneksi lama, sehingga menyetelnya justru berisiko
+                // menyambungkan output preview dua kali - preview tetap
+                // melaporkan "mulai" tetapi tidak pernah menggambar.
+                implementationMode={useTextureView ? "compatible" : undefined}
+                onPreviewStarted={() => setPreviewStarted(true)}
+                onLayout={(e) =>
+                  setPreviewBox({
+                    width: e.nativeEvent.layout.width,
+                    height: e.nativeEvent.layout.height,
+                  })
+                }
+                onError={faceQualityGate.onFaceDetectionError}
+              />
+            ) : (
+              // ===== iOS - JANGAN DIUBAH =====
+              // Jalur ini sudah teruji di iPhone. Bug preview hitam & sesi
+              // kamera yang dikonfigurasi ulang hanya muncul di Android, jadi
+              // perbaikannya sengaja tidak diberlakukan di sini.
+              <FaceDetectorCamera
+                style={styles.camera}
+                device={cameraDevice}
+                isActive={isCameraVisible}
+                outputs={cameraOutputs}
+                constraints={cameraConstraints}
+                enableLowLightBoost
+                onFacesDetected={handleCameraFaces}
+                onError={faceQualityGate.onFaceDetectionError}
+                performanceMode="fast"
+                // DIAGNOSTIK: landmark & classification live dimatikan untuk
+                // menghindari crash SIGSEGV MLKit di iOS 26. TIDAK memengaruhi
+                // pipeline foto still (utils/faceAuthNative.ts) yang tetap
+                // memakai FACE_DETECTOR_OPTIONS lengkap saat enroll/verify.
+                runLandmarks={false}
+                runClassifications={false}
+                minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
+              />
+            )
+          )}
+          {/* ANDROID SAJA - penanda build dan keadaan preview. Tanpa ini tidak
+              ada cara memastikan APK mana yang sedang terpasang hanya dari
+              tangkapan layar. Dilepas setelah preview beres. */}
+          {Platform.OS === "android" && (
+            <TouchableOpacity
+              style={[styles.diagToggle, { top: insets.top + 34 }]}
+              onPress={() => setUseTextureView((v) => !v)}
+            >
+              <Text style={styles.diagToggleText}>
+                {useTextureView ? "mode: texture" : "mode: surface"}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {Platform.OS === "android" && (
+            <Text style={[styles.diagBadge, { top: insets.top + 8 }]}>
+              {`B10 - preview ${previewStarted ? "mulai" : "belum"} - ${Math.round(
+                previewBox.width,
+              )}x${Math.round(previewBox.height)}`}
+            </Text>
+          )}
+          <View
+            style={[
+              styles.cameraControls,
+              { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
+            ]}
+            pointerEvents="box-none"
+          >
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => {
+                // Bersihkan overlay foto debug juga - kalau tidak, foto lama
+                // ini akan nongol lagi menutupi kamera di sesi absen berikutnya
+                // (debugPhotoUri masih ke-set dari kegagalan sebelumnya).
+                setDebugPhotoUri(null);
+                setIsCameraVisible(false);
+              }}
+            >
+              <BlurView intensity={50} tint="dark" style={styles.closeBtnBlur}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </BlurView>
+            </TouchableOpacity>
+
+            <View style={styles.cameraBottomArea}>
+              <BlurView intensity={50} tint="dark" style={styles.liveStatusPill}>
+                <Text style={styles.liveStatusText}>
+                  {liveness.passed
+                    ? `${faceQualityGate.message} (akan diverifikasi setelah jepret)`
+                    : `${liveness.instruction} (langkah ${liveness.step}/${liveness.total})`}
+                </Text>
+              </BlurView>
+
+              <TouchableOpacity
+                style={[
+                  styles.captureBtn,
+                  captureDisabled && styles.captureBtnDisabled,
+                ]}
+                onPress={takeSelfie}
+                disabled={captureDisabled}
+              >
+                <View
+                  style={[
+                    styles.captureInner,
+                    captureDisabled && styles.captureInnerDisabled,
+                  ]}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {isProcessingFace && (
+            <View style={styles.faceProcessingOverlay}>
+              <ActivityIndicator size="large" color="#FFF" />
+              <Text style={styles.faceProcessingText}>
+                Memverifikasi wajah...
+              </Text>
+            </View>
+          )}
+
+          {/* DIAGNOSTIK SEMENTARA: lihat komentar di deklarasi debugPhotoUri.
+              Dirender sebagai overlay di DALAM Modal kamera ini (bukan
+              <Modal> terpisah) - dua <Modal> RN yang sama-sama visible di
+              iOS tidak reliable (modal kedua bisa gagal tampil secara diam-
+              diam), dan modal kamera ini sengaja tetap terbuka saat deteksi
+              gagal supaya pengguna bisa langsung coba lagi. */}
+          {!!debugPhotoUri && (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: "#000",
+              }}
+            >
+              <Image
+                source={{ uri: debugPhotoUri }}
+                style={{ flex: 1 }}
+                resizeMode="contain"
+              />
+              <TouchableOpacity
+                style={{ padding: 16, alignItems: "center" }}
+                onPress={() => setDebugPhotoUri(null)}
+              >
+                <Text style={{ color: "#FFF", fontSize: 16 }}>Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+  );
+
                 }}
                 style={styles.profileImage}
                 onError={() => setPhotoFailed(true)}
@@ -1096,6 +1374,10 @@ export default function LKHScreen() {
       {/* Tombol sinkron MELAYANG (FAB) di pojok kanan bawah - ikon saja, seperti
           build 30. Sengaja SIBLING dari ScrollView (bukan di dalamnya) supaya
           menempel di layar & tidak ikut ter-scroll. */}
+      {/* Disembunyikan selama kamera terbuka: elevation-nya bisa menggambar di
+          atas lapisan kamera sekarang setelah lapisan itu tidak lagi memakai
+          elevation. */}
+      {!isCameraVisible && (
       <TouchableOpacity
         style={styles.fabButton}
         onPress={confirmSync}
@@ -1104,6 +1386,7 @@ export default function LKHScreen() {
       >
         <FontAwesome5 name="sync-alt" size={18} color="#FFF" />
       </TouchableOpacity>
+      )}
 
       <Modal transparent visible={isSyncing} animationType="fade">
         <View style={styles.modalLoadingOverlay}>
@@ -1114,135 +1397,24 @@ export default function LKHScreen() {
         </View>
       </Modal>
 
-      <Modal visible={isCameraVisible} animationType="slide">
-        {/* View polos + inset eksplisit, bukan SafeAreaView - alasan lengkap
-            ada di komentar header FaceEnrollmentModal. Singkatnya: tombol
-            close yang duduk di dalam area status bar / Dynamic Island tidak
-            menerima sentuhan. */}
-        <View style={styles.cameraContainer}>
-          {cameraDevice && (
-            <FaceDetectorCamera
-              style={styles.camera}
-              device={cameraDevice}
-              isActive={isCameraVisible}
-              outputs={cameraOutputs}
-              constraints={cameraConstraints}
-              // iOS SAJA - ini fitur AVCaptureDevice. Di Android, meminta
-              // low-light boost pada perangkat yang tidak mendukungnya membuat
-              // sesi kamera gagal dikonfigurasi -> preview HITAM.
-              enableLowLightBoost={Platform.OS === "ios"}
-              onFacesDetected={handleCameraFaces}
-              onError={faceQualityGate.onFaceDetectionError}
-              performanceMode="fast"
-              // DIAGNOSTIK: dipaksa false (bukan pakai
-              // FACE_DETECTOR_OPTIONS.runLandmarks/runClassifications) untuk
-              // isolasi apakah crash SIGSEGV saat kamera dibuka (lihat crash
-              // log: EXC_BAD_ACCESS di thread JS Hermes, dipicu callback
-              // onFacesDetected) berasal dari beban MLKit landmarks/
-              // classifications di live preview - library ini sendiri
-              // mengaku MLKit-iOS belum sepenuhnya kompatibel dengan iOS 26.
-              // TIDAK memengaruhi pipeline foto still (utils/faceAuthNative.ts,
-              // dipakai saat enroll/verify sungguhan) yang tetap pakai
-              // FACE_DETECTOR_OPTIONS asli (landmarks+classifications ON).
-              // Kalau setelah ini kamera masih crash, kemungkinan besar
-              // masalahnya bukan di sini - live face detector-nya sendiri
-              // yang perlu dimatikan total (bukan cuma landmarks/
-              // classifications-nya).
-              runLandmarks={false}
-              runClassifications={false}
-              minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
-            />
-          )}
-          <View
-            style={[
-              styles.cameraControls,
-              { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
-            ]}
-            pointerEvents="box-none"
-          >
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => {
-                // Bersihkan overlay foto debug juga - kalau tidak, foto lama
-                // ini akan nongol lagi menutupi kamera di sesi absen berikutnya
-                // (debugPhotoUri masih ke-set dari kegagalan sebelumnya).
-                setDebugPhotoUri(null);
-                setIsCameraVisible(false);
-              }}
-            >
-              <BlurView intensity={50} tint="dark" style={styles.closeBtnBlur}>
-                <Ionicons name="close" size={24} color="#FFF" />
-              </BlurView>
-            </TouchableOpacity>
-
-            <View style={styles.cameraBottomArea}>
-              <BlurView intensity={50} tint="dark" style={styles.liveStatusPill}>
-                <Text style={styles.liveStatusText}>
-                  {liveness.passed
-                    ? `${faceQualityGate.message} (akan diverifikasi setelah jepret)`
-                    : `${liveness.instruction} (langkah ${liveness.step}/${liveness.total})`}
-                </Text>
-              </BlurView>
-
-              <TouchableOpacity
-                style={[
-                  styles.captureBtn,
-                  captureDisabled && styles.captureBtnDisabled,
-                ]}
-                onPress={takeSelfie}
-                disabled={captureDisabled}
-              >
-                <View
-                  style={[
-                    styles.captureInner,
-                    captureDisabled && styles.captureInnerDisabled,
-                  ]}
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {isProcessingFace && (
-            <View style={styles.faceProcessingOverlay}>
-              <ActivityIndicator size="large" color="#FFF" />
-              <Text style={styles.faceProcessingText}>
-                Memverifikasi wajah...
-              </Text>
-            </View>
-          )}
-
-          {/* DIAGNOSTIK SEMENTARA: lihat komentar di deklarasi debugPhotoUri.
-              Dirender sebagai overlay di DALAM Modal kamera ini (bukan
-              <Modal> terpisah) - dua <Modal> RN yang sama-sama visible di
-              iOS tidak reliable (modal kedua bisa gagal tampil secara diam-
-              diam), dan modal kamera ini sengaja tetap terbuka saat deteksi
-              gagal supaya pengguna bisa langsung coba lagi. */}
-          {!!debugPhotoUri && (
-            <View
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "#000",
-              }}
-            >
-              <Image
-                source={{ uri: debugPhotoUri }}
-                style={{ flex: 1 }}
-                resizeMode="contain"
-              />
-              <TouchableOpacity
-                style={{ padding: 16, alignItems: "center" }}
-                onPress={() => setDebugPhotoUri(null)}
-              >
-                <Text style={{ color: "#FFF", fontSize: 16 }}>Tutup</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* ANDROID: kamera SENGAJA tidak dibungkus <Modal>.
+          Di Android sebuah <Modal> RN adalah Dialog dengan jendela SENDIRI.
+          PreviewView CameraX di dalam jendela terpisah itu tidak pernah
+          terkomposisi ke layar: aliran frame tetap jalan (deteksi wajah dan
+          tantangan keaktifan normal), tetapi yang tampak hanya HITAM - dan
+          gambarnya baru muncul begitu ada dialog lain yang memaksa jendela
+          menggambar ulang. Karena itu di Android kamera dirender sebagai
+          lapisan biasa di dalam pohon tampilan yang sama.
+          iOS TETAP memakai <Modal> seperti semula. */}
+      {Platform.OS === "android" ? (
+        isCameraVisible ? (
+          <View style={styles.cameraOverlay}>{cameraSurface}</View>
+        ) : null
+      ) : (
+        <Modal visible={isCameraVisible} animationType="slide">
+          {cameraSurface}
+        </Modal>
+      )}
 
       {/* Modal pendaftaran wajah (enrollment terpisah). Sengaja sebagai
           sibling dari modal kamera absen di atas - keduanya tidak akan pernah
@@ -1526,9 +1698,47 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#FFF",
   },
+  // Lapisan kamera Android: menutup seluruh layar di dalam pohon tampilan.
+  // elevation/zIndex harus di atas FAB sinkron (elevation 5).
+  diagToggle: {
+    position: "absolute",
+    left: 12,
+    zIndex: 31,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+  },
+  diagToggleText: { color: "#FFF", fontSize: 11 },
+  diagBadge: {
+    position: "absolute",
+    left: 12,
+    zIndex: 30,
+    elevation: 30,
+    color: "#FFF",
+    fontSize: 11,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    // SENGAJA tanpa elevation. PreviewView memakai SurfaceView, yang dirender
+    // di lapisan TERPISAH di belakang jendela dan mengandalkan "hole punching"
+    // agar terlihat. elevation memaksa subtree ini menjadi render layer
+    // tersendiri, dan lubang itu tidak pernah tembus -> preview HITAM padahal
+    // CameraX melaporkan frame sudah mengalir. zIndex saja sudah cukup karena
+    // tombol sinkron disembunyikan selama kamera terbuka.
+    zIndex: 20,
+  },
   cameraContainer: {
     flex: 1,
-    backgroundColor: "#000",
+    // Android: TRANSPARAN. Latar hitam opak di sini ikut menutup area lubang
+    // SurfaceView sehingga yang terlihat hanya hitam. iOS tetap hitam seperti
+    // semula (di sana preview dirender langsung ke dalam view).
+    backgroundColor: Platform.OS === "android" ? "transparent" : "#000",
     position: "relative",
   },
   camera: {
