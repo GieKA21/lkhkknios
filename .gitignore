@@ -23,3 +23,9 @@ __pycache__/
 .venv/
 tools/face-calibration/photos/
 tools/face-calibration/hasil-kalibrasi.csv
+
+# graphify - graf pengetahuan hasil pemindaian, dibangun ulang kapan saja
+graphify-out/
+
+# Konfigurasi kunci API perkakas - jangan pernah masuk git
+setting.json
