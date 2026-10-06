@@ -103,6 +103,14 @@ const MAKS_ULANG_MUTU = 1;
  */
 const TICK_TENGAH_MANTAP = 3;
 
+/**
+ * Lama penutup layar ditahan setelah foto pengikatan diambil, menunggu
+ * pengukuran pencahayaan iOS kembali mantap. Lihat alasan lengkapnya di
+ * jalankanPengikatan. 450 ms cukup untuk satu putaran pengukuran ulang dan
+ * masih terasa seketika bagi pengguna.
+ */
+const PEMULIHAN_CAHAYA_MS = 450;
+
 // ===========================================================================
 // PENJAGA KESINAMBUNGAN WAJAH
 // ===========================================================================
@@ -257,6 +265,21 @@ export function useLivenessChallenge(
     } catch {
       hasil = "ulangi";
     }
+    // JEDA PEMULIHAN PENCAHAYAAN - jangan dihapus tanpa membaca ini.
+    //
+    // Mengambil foto diam membuat iOS mengukur ulang pencahayaan, dan selama
+    // pengukuran itu preview meredup beberapa bingkai lalu pulih. Gejalanya
+    // sudah pernah tercatat di proyek ini ("pratinjau kamera gelap dan
+    // berkedip") dan lebih kentara di sini karena saat detektor wajah aktif
+    // iOS membatasi exposure ke satu durasi bingkai - lihat cameraConstraints
+    // di LKHScreen.
+    //
+    // Akibatnya bukan sekadar enak atau tidak dipandang: bila pengguna
+    // menekan shutter tepat pada bingkai-bingkai redup itu, foto absennya
+    // ikut gelap, mutunya gagal, dan verifikasinya ditolak. Karena itu
+    // penutup layar DAN kuncian shutter sengaja ditahan sebentar sampai
+    // pencahayaan kembali mantap.
+    await new Promise((lanjut) => setTimeout(lanjut, PEMULIHAN_CAHAYA_MS));
     setIsBinding(false);
     // Frame diabaikan selama pengikatan, jadi kotak terakhir sudah basi -
     // tanpa dikosongkan, tick pertama sesudah ini akan terbaca sebagai
