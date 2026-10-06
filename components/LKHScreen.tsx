@@ -46,6 +46,7 @@ import { decideAttendance } from "../utils/verificationAgent";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
+import type { HasilPengikatan } from "../hooks/useLivenessChallenge";
 import { scheduleDailyAttendanceReminders } from "../utils/notifications";
 import {
     checkAttendanceLocation,
@@ -144,6 +145,33 @@ function initials(name: string): string {
 const FACE_TICK_MS = 110;
 
 /**
+ * Batas umur PENGIKATAN IDENTITAS (lihat hooks/useLivenessChallenge.ts).
+ *
+ * Identitas diperiksa di dalam tantangan keaktifan, lalu pengguna menekan
+ * shutter beberapa saat kemudian. Rentang di antara keduanya adalah jendela
+ * yang tersisa untuk menukar wajah, jadi dibatasi: lewat dari ini, tantangan
+ * harus diulang. 20 detik dipilih supaya pengguna sah yang sejenak ragu tidak
+ * ikut tertolak - jarak wajar antara "silakan ambil foto" dan tombol ditekan
+ * hanya beberapa detik.
+ */
+const PENGIKATAN_TTL_MS = 20_000;
+
+// ===========================================================================
+// SAKLAR UJI SEMENTARA - HARUS KEMBALI false SEBELUM BUILD APA PUN YANG
+// DIPAKAI MENGUJI AKURASI ATAU DILAPORKAN DI NASKAH.
+//
+// Dipasang 4 Oktober 2026 hanya untuk menguji jalur kamera di luar periode
+// KKN (periode angkatan berakhir 24 September 2026), setelah crash
+// "PreviewView.previewOutput: Cannot cast dynamic to a jsi::Value type"
+// diperbaiki lewat regenerasi proyek native.
+//
+// Yang dilewati HANYA gerbang tanggal. Gerbang lain - wajah terdaftar, izin
+// kamera, geofence, tantangan keaktifan, dan ambang kemiripan - tidak
+// disentuh sama sekali.
+// ===========================================================================
+const ABAIKAN_PERIODE_KKN = false;
+
+/**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
  * New Architecture (Fabric), View ber-width/height persen + borderRadius besar
  * kadang dirender sebagai kotak-membulat, bukan lingkaran - itulah sebab hari
@@ -238,10 +266,79 @@ export default function LKHScreen() {
     [],
   );
   const faceQualityGate = useFaceQualityGate();
+
+  // Kapan identitas terakhir kali terikat ke tantangan keaktifan (epoch ms),
+  // null bila belum ada. Dibaca takeSelfie untuk menolak pengikatan yang sudah
+  // basi - lihat PENGIKATAN_TTL_MS.
+  const pengikatanAtRef = useRef<number | null>(null);
+
+  /**
+   * PENGIKATAN IDENTITAS - dipanggil hook liveness saat pengguna menghadap
+   * tengah sesudah kedua tolehan selesai.
+   *
+   * Mengambil satu foto diam-diam lalu memeriksa apakah wajah yang SEDANG
+   * mengerjakan tantangan benar-benar pemilik akun. Inilah yang menutup
+   * serangan "teman menoleh, lalu foto korban disodorkan saat menjepret":
+   * wajah teman gugur di sini dan tidak pernah membuka tombol shutter.
+   *
+   * Kegagalan MUTU dibedakan dari kegagalan IDENTITAS. Mata terpejam atau
+   * wajah blur hanya meminta pengguna menghadap tengah sekali lagi; yang
+   * mengulang tantangan dari awal hanyalah wajah yang memang bukan pemiliknya.
+   */
+  const handleBindIdentity = useCallback(async (): Promise<HasilPengikatan> => {
+    try {
+      const photoFile = await photoOutput.capturePhotoToFile({}, {});
+      const photoUri = `file://${photoFile.filePath}`;
+
+      let embedding: Float32Array;
+      try {
+        embedding = await getFaceEmbedding(photoUri);
+      } catch (error) {
+        // Semua galat pembacaan wajah diperlakukan sebagai soal mutu: pada
+        // titik ini pengguna sedang bergerak, jadi wajar sesekali meleset.
+        if (
+          error instanceof NoFaceDetectedError ||
+          error instanceof MultipleFacesDetectedError ||
+          error instanceof PoorQualityFaceError
+        ) {
+          return "ulangi";
+        }
+        throw error;
+      }
+
+      const verdict = await decideAttendance(embedding);
+      if (verdict.kind === "not-enrolled") {
+        // Set wajah hilang di tengah jalan (mis. di-reset dari Profil).
+        setIsCameraVisible(false);
+        setIsEnrollmentVisible(true);
+        return "gagal";
+      }
+      if (verdict.kind === "rejected") {
+        pengikatanAtRef.current = null;
+        Alert.alert(
+          "Wajah Tidak Cocok",
+          `Wajah yang mengerjakan tantangan tidak cocok dengan wajah terdaftar ` +
+            `pada akun ini (kemiripan ${(verdict.similarity * 100).toFixed(2)}%). ` +
+            `Absensi harus dikerjakan oleh pemilik akun.`,
+        );
+        return "gagal";
+      }
+
+      pengikatanAtRef.current = Date.now();
+      return "ok";
+    } catch (error) {
+      console.error("Gagal mengikat identitas pada tantangan keaktifan", error);
+      return "ulangi";
+    }
+    // photoOutput dimemo dengan deps [] (lihat photoConfig), jadi referensi
+    // callback ini stabil - penting, karena ia ikut menentukan stabilitas
+    // onFacesDetected dan karenanya konfigurasi sesi kamera.
+  }, [photoOutput]);
+
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
-  // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
-  // lolos - lihat hooks/useLivenessChallenge.ts.
-  const liveness = useLivenessChallenge();
+  // tantangan gerak (menoleh dua sisi) DAN identitasnya terbukti pemilik akun
+  // - lihat hooks/useLivenessChallenge.ts.
+  const liveness = useLivenessChallenge(handleBindIdentity);
   // Satu callback menyuapi frame ke quality gate DAN liveness (keduanya baca
   // yaw/bounds yang sama). onFacesDetected dipanggil per-frame di thread JS &
   // tiap hook memanggil setState; tanpa throttle, komponen ini dirender ulang
@@ -622,6 +719,8 @@ export default function LKHScreen() {
   };
 
   const isWithinKKNPeriod = (date: Date) => {
+    // SAKLAR UJI - lihat ABAIKAN_PERIODE_KKN di dekat awal berkas.
+    if (ABAIKAN_PERIODE_KKN) return true;
     // Fail-open kalau server belum punya tanggal periode sama sekali (lihat
     // kknPeriod di atas) - jangan blokir absen gara-gara data admin belum
     // lengkap.
@@ -741,6 +840,7 @@ export default function LKHScreen() {
 
     // Setiap sesi absen memulai tantangan keaktifan dari nol - membuktikan
     // wajah hidup yang hadir sekarang, bukan sekali seumur pemasangan.
+    pengikatanAtRef.current = null;
     liveness.reset();
     setIsCameraVisible(true);
   };
@@ -770,6 +870,29 @@ export default function LKHScreen() {
   };
 
   const takeSelfie = async () => {
+    // Identitas sudah diperiksa DI DALAM tantangan keaktifan (lihat
+    // handleBindIdentity). Yang diperiksa di sini hanyalah umurnya: makin
+    // lama jarak antara pemeriksaan itu dan shutter ditekan, makin lebar
+    // jendela untuk menukar wajah di antaranya.
+    // liveness.passed diperiksa ulang di sini, tidak hanya lewat
+    // captureDisabled: penjaga kesinambungan dapat membatalkan kelulusan
+    // kapan saja, dan jalur ini terlalu penting untuk bergantung pada satu
+    // penjagaan di lapisan tampilan saja.
+    const terikatPada = pengikatanAtRef.current;
+    if (
+      !liveness.passed ||
+      terikatPada === null ||
+      Date.now() - terikatPada > PENGIKATAN_TTL_MS
+    ) {
+      pengikatanAtRef.current = null;
+      liveness.reset();
+      Alert.alert(
+        "Ulangi Deteksi Aktif",
+        "Terlalu lama sejak wajah Anda diperiksa. Silakan ulangi tantangan gerak lalu ambil foto.",
+      );
+      return;
+    }
+
     setIsProcessingFace(true);
     try {
       const photoFile = await photoOutput.capturePhotoToFile({}, {});
@@ -1048,7 +1171,11 @@ export default function LKHScreen() {
 
   // Shutter absen terkunci sampai tantangan keaktifan lolos (selain saat
   // sedang memproses). Tanpa ini foto/layar statis bisa langsung dijepret.
-  const captureDisabled = isProcessingFace || !liveness.passed;
+  // liveness.isBinding ikut mengunci shutter: selama identitas sedang
+  // diperiksa, kamera sedang dipakai mengambil foto pengikatan, jadi
+  // menjepret bersamaan akan bertabrakan dengan permintaan itu.
+  const captureDisabled =
+    isProcessingFace || liveness.isBinding || !liveness.passed;
 
   // Sudah absen hari ini? Cukup ADA catatan absen untuk tanggal ini dengan
   // status apa pun (synced/unsynced) - TIDAK lagi bergantung pada foto lokal.
