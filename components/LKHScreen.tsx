@@ -169,7 +169,7 @@ const PENGIKATAN_TTL_MS = 20_000;
 // kamera, geofence, tantangan keaktifan, dan ambang kemiripan - tidak
 // disentuh sama sekali.
 // ===========================================================================
-const ABAIKAN_PERIODE_KKN = false;
+const ABAIKAN_PERIODE_KKN = true;
 
 /**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
