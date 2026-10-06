@@ -287,7 +287,17 @@ export default function LKHScreen() {
    */
   const handleBindIdentity = useCallback(async (): Promise<HasilPengikatan> => {
     try {
-      const photoFile = await photoOutput.capturePhotoToFile({}, {});
+      // enableShutterSound: false - jepretan ini TIDAK diminta pengguna, ia
+      // bagian dalam dari tantangan keaktifan. Membunyikan rana di sini
+      // membuat satu kali absen terdengar memotret beberapa kali dan
+      // membingungkan. Bunyi rana tetap menyala pada foto absen yang
+      // sesungguhnya di takeSelfie, karena di sana memang ada umpan balik
+      // yang berguna. Catatan API: sebagian wilayah memaksa bunyi rana di
+      // tingkat sistem, jadi ini permintaan, bukan jaminan.
+      const photoFile = await photoOutput.capturePhotoToFile(
+        { enableShutterSound: false },
+        {},
+      );
       const photoUri = `file://${photoFile.filePath}`;
 
       let embedding: Float32Array;
@@ -1297,6 +1307,26 @@ export default function LKHScreen() {
               </BlurView>
             </TouchableOpacity>
 
+            {/* Penutup saat identitas diperiksa.
+                Jepretan pengikatan menghentikan aliran preview sesaat, dan
+                jeda itu tampak sebagai kedipan hitam di tengah tantangan -
+                terlihat seperti aplikasi tersendat padahal sedang bekerja.
+                Lapisan ini menutupinya dengan keterangan yang jujur tentang
+                apa yang sedang berlangsung.
+
+                Sengaja hanya lapisan tampilan: tidak ada prop <Camera> yang
+                disentuh, sehingga sesi kamera tidak dikonfigurasi ulang
+                (penyebab preview hitam yang sebenarnya - lihat catatan di
+                faceDetectorOutput). */}
+            {liveness.isBinding && (
+              <View style={styles.bindingOverlay} pointerEvents="none">
+                <BlurView intensity={40} tint="dark" style={styles.bindingBox}>
+                  <ActivityIndicator size="large" color="#FFF" />
+                  <Text style={styles.bindingText}>Memeriksa identitas</Text>
+                </BlurView>
+              </View>
+            )}
+
             <View style={styles.cameraBottomArea}>
               <BlurView intensity={50} tint="dark" style={styles.liveStatusPill}>
                 <Text style={styles.liveStatusText}>
@@ -1936,6 +1966,27 @@ const styles = StyleSheet.create({
   },
   liveStatusText: {
     fontSize: 13,
+    fontWeight: "600",
+    color: "#FFFFFF",
+  },
+  // Menutupi kedipan hitam saat foto pengikatan diambil - lihat pemakaiannya
+  // di dalam cameraSurface.
+  bindingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  bindingBox: {
+    alignItems: "center",
+    paddingVertical: 22,
+    paddingHorizontal: 28,
+    borderRadius: 18,
+    overflow: "hidden",
+  },
+  bindingText: {
+    marginTop: 12,
+    fontSize: 14,
     fontWeight: "600",
     color: "#FFFFFF",
   },

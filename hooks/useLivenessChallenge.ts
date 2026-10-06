@@ -89,7 +89,19 @@ const CENTER_DEG = 10;
 // Berapa kali mutu foto pengikatan boleh gagal (mata terpejam, wajah blur)
 // sebelum tantangan diulang dari awal. Kegagalan MUTU bukan kegagalan
 // identitas, jadi tidak adil kalau langsung mengulang semuanya.
-const MAKS_ULANG_MUTU = 2;
+const MAKS_ULANG_MUTU = 1;
+
+/**
+ * Berapa tick berturut-turut wajah harus sudah menghadap tengah sebelum foto
+ * pengikatan diambil.
+ *
+ * Menjepret pada tick pertama yang kebetulan lolos ambang berarti menangkap
+ * wajah yang masih bergerak - hasilnya buram, mutunya gagal, dan satu
+ * jepretan beserta satu inferensi terbuang percuma. Menunggu beberapa tick
+ * jauh lebih murah daripada mengulang keduanya. Pada FACE_TICK_MS=110 di
+ * LKHScreen, 3 tick kira-kira 0,33 detik - tidak terasa lambat bagi pengguna.
+ */
+const TICK_TENGAH_MANTAP = 3;
 
 // ===========================================================================
 // PENJAGA KESINAMBUNGAN WAJAH
@@ -192,6 +204,9 @@ export function useLivenessChallenge(
   // berturut-turut wajah tidak terbaca.
   const kotakRef = useRef<KotakWajah | null>(null);
   const tickHilangRef = useRef(0);
+  // Berapa tick berturut-turut wajah sudah menghadap tengah pada fase
+  // confirm-center - lihat TICK_TENGAH_MANTAP.
+  const tickTengahRef = useRef(0);
   // onBind disimpan di ref dengan alasan yang sama: onFacesDetected
   // di-useCallback([]) supaya referensinya stabil (sesi kamera dikonfigurasi
   // ulang kalau berubah - lihat catatan "preview hitam" di LKHScreen), jadi
@@ -211,6 +226,7 @@ export function useLivenessChallenge(
     ulangMutuRef.current = 0;
     kotakRef.current = null;
     tickHilangRef.current = 0;
+    tickTengahRef.current = 0;
     setPassed(false);
     setStep(0);
     setIsBinding(false);
@@ -258,6 +274,7 @@ export function useLivenessChallenge(
     if (hasil === "ulangi" && ulangMutuRef.current < MAKS_ULANG_MUTU) {
       ulangMutuRef.current += 1;
       phaseRef.current = "confirm-center";
+      tickTengahRef.current = 0;
       setInstruction(MSG.ulangi);
       return;
     }
@@ -366,10 +383,16 @@ export function useLivenessChallenge(
 
         case "confirm-center":
           // Wajah sudah frontal lagi: inilah titik pengikatan identitas.
+          // Ditunggu beberapa tick supaya yang terjepret wajah yang DIAM,
+          // bukan wajah yang kebetulan melintasi tengah saat masih berputar.
           if (Math.abs(yaw) <= CENTER_DEG) {
-            phaseRef.current = "binding";
-            void jalankanPengikatan();
+            tickTengahRef.current += 1;
+            if (tickTengahRef.current >= TICK_TENGAH_MANTAP) {
+              phaseRef.current = "binding";
+              void jalankanPengikatan();
+            }
           } else {
+            tickTengahRef.current = 0;
             setInstruction(MSG.confirm);
           }
           break;
