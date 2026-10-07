@@ -202,6 +202,32 @@ function getModel(): Promise<TensorflowModel> {
   return modelPromise;
 }
 
+/**
+ * Memuat model lebih awal, tanpa menunggu hasilnya.
+ *
+ * KENAPA PERLU. Berkas model 5 MB beserta penyiapan interpreternya baru dimuat
+ * saat getModel() dipanggil pertama kali, dan itu memakan beberapa detik.
+ * Dulu beban tersebut jatuh pada takeSelfie - sesudah pengguna menekan
+ * shutter, sehingga jedanya terbaca wajar sebagai "sedang memproses foto".
+ *
+ * Sejak identitas diperiksa DI DALAM tantangan keaktifan, pemakaian pertama
+ * pindah ke tengah tantangan, saat pengguna hanya berdiri menunggu. Jeda yang
+ * sama kini terbaca sebagai aplikasi menggantung - dilaporkan pada pengujian
+ * perangkat 7 Oktober 2026.
+ *
+ * Dipanggil saat kamera presensi dibuka, tanpa await: pengguna masih harus
+ * menoleh dua kali sebelum pemeriksaan identitas berjalan, dan beberapa detik
+ * itu cukup untuk menyelesaikan pemuatan di latar.
+ *
+ * Galat sengaja ditelan. Kalau modelnya memang gagal dimuat, pesan yang benar
+ * akan muncul pada pemakaian sesungguhnya lewat FaceModelNotReadyError -
+ * memunculkannya di sini hanya akan membingungkan, sebab pengguna belum
+ * melakukan apa pun.
+ */
+export function warmUpFaceModel(): void {
+  void getModel().catch(() => {});
+}
+
 // expo-image-manipulator gets the actual pixel dimensions right (it's how
 // cropAlignResize below reasons about coordinates), but when MLKit finds
 // *zero* faces there's nothing else to go on to tell a genuinely blank/dark

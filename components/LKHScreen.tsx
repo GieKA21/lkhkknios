@@ -37,6 +37,7 @@ import {
     MultipleFacesDetectedError,
     NoFaceDetectedError,
     PoorQualityFaceError,
+    warmUpFaceModel,
 } from "../utils/faceAuthNative";
 import {
     isEnrolled,
@@ -847,6 +848,14 @@ export default function LKHScreen() {
     } finally {
       setIsCheckingLocation(false);
     }
+
+    // Muat model lebih awal, jangan ditunggu. Pemeriksaan identitas di dalam
+    // tantangan adalah pemakaian PERTAMA model pada sesi ini, dan memuat
+    // berkas 5 MB beserta interpreternya memakan beberapa detik - tanpa ini
+    // jeda tersebut jatuh di tengah tantangan dan terbaca sebagai aplikasi
+    // menggantung. Pengguna masih harus menoleh dua kali sebelum pemeriksaan
+    // berjalan, jadi waktunya cukup untuk selesai di latar.
+    warmUpFaceModel();
 
     // Setiap sesi absen memulai tantangan keaktifan dari nol - membuktikan
     // wajah hidup yang hadir sekarang, bukan sekali seumur pemasangan.
