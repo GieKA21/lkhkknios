@@ -334,8 +334,7 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
             baru. Ini versi APLIKASI, bukan APP_VERSION yang dikirim ke server
             di utils/deviceInfo.ts. */}
         <Text style={styles.versionText}>
-          Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-          {Constants.expoConfig?.ios?.buildNumber ?? "?"})
+          Versi {Constants.expoConfig?.version ?? "?"}
         </Text>
       </ScrollView>
     </SafeAreaView>

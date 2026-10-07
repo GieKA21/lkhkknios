@@ -483,8 +483,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             aplikasi yang sebenarnya. Ini versi APLIKASI; APP_VERSION di
             utils/deviceInfo.ts adalah hal berbeda yang dikirim ke server. */}
         <Text style={styles.footerText}>
-          Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-          {Constants.expoConfig?.ios?.buildNumber ?? "?"})
+          Versi {Constants.expoConfig?.version ?? "?"}
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

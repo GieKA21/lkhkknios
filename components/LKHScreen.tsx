@@ -439,12 +439,11 @@ export default function LKHScreen() {
   // satu layout pass sehingga permukaannya ikut tergambar. Timer 600ms adalah
   // jaring pengaman bila onPreviewStarted tidak menyala.
   const [previewStarted, setPreviewStarted] = useState(false);
-  // Ukuran nyata view preview, dibaca dari onLayout - dipakai penanda
-  // diagnostik di bawah untuk memastikan view-nya memang punya ukuran.
-  const [previewBox, setPreviewBox] = useState({ width: 0, height: 0 });
-  // DIAGNOSTIK SEMENTARA (Android): pengalih mode render preview, supaya satu
-  // sesi uji bisa mencoba SurfaceView dan TextureView tanpa build ulang.
-  const [useTextureView, setUseTextureView] = useState(false);
+  // Mode render preview Android. Tombol pengubahnya dilepas bersama lapisan
+  // diagnostik, tetapi nilainya tetap dibaca prop implementationMode -
+  // dibiarkan sebagai state supaya mudah dinyalakan lagi bila suatu saat
+  // ada perangkat yang menuntut TextureView.
+  const [useTextureView] = useState(false);
   useEffect(() => {
     if (Platform.OS !== "android") return;
     if (!isCameraVisible) {
@@ -1241,12 +1240,6 @@ export default function LKHScreen() {
                 // melaporkan "mulai" tetapi tidak pernah menggambar.
                 implementationMode={useTextureView ? "compatible" : undefined}
                 onPreviewStarted={() => setPreviewStarted(true)}
-                onLayout={(e) =>
-                  setPreviewBox({
-                    width: e.nativeEvent.layout.width,
-                    height: e.nativeEvent.layout.height,
-                  })
-                }
                 onError={faceQualityGate.onFaceDetectionError}
               />
             ) : (
@@ -1274,26 +1267,18 @@ export default function LKHScreen() {
               />
             )
           )}
-          {/* ANDROID SAJA - penanda build dan keadaan preview. Tanpa ini tidak
-              ada cara memastikan APK mana yang sedang terpasang hanya dari
-              tangkapan layar. Dilepas setelah preview beres. */}
-          {Platform.OS === "android" && (
-            <TouchableOpacity
-              style={[styles.diagToggle, { top: insets.top + 34 }]}
-              onPress={() => setUseTextureView((v) => !v)}
-            >
-              <Text style={styles.diagToggleText}>
-                {useTextureView ? "mode: texture" : "mode: surface"}
-              </Text>
-            </TouchableOpacity>
-          )}
-          {Platform.OS === "android" && (
-            <Text style={[styles.diagBadge, { top: insets.top + 8 }]}>
-              {`B10 - preview ${previewStarted ? "mulai" : "belum"} - ${Math.round(
-                previewBox.width,
-              )}x${Math.round(previewBox.height)}`}
-            </Text>
-          )}
+          {/* DIAGNOSTIK ANDROID DILEPAS 7 Oktober 2026.
+              Dulu di sini ada penanda nomor build beserta keadaan preview, dan
+              tombol pengubah mode permukaan - keduanya dipasang saat memburu
+              bug "preview hitam" di Android, dan komentarnya sendiri menyebut
+              akan dilepas begitu preview beres. Preview sudah terbukti jalan
+              pada pengujian perangkat, jadi keduanya dihapus agar layar
+              presensi bersih.
+
+              previewStarted TETAP dipakai: nilainya menggeser tinggi preview
+              satu piksel untuk memaksa satu kali layout pass - lihat prop
+              style pada <Camera> Android di atas. useTextureView juga tetap
+              ada sebagai saklar di kode, hanya tombolnya yang dilepas. */}
           <View
             style={[
               styles.cameraControls,

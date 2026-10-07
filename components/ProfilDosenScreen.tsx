@@ -161,8 +161,7 @@ export default function ProfilDosenScreen({ onLogout }: ProfilDosenScreenProps) 
         </View>
 
         <Text style={styles.versionText}>
-          Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-          {Constants.expoConfig?.ios?.buildNumber ?? "?"})
+          Versi {Constants.expoConfig?.version ?? "?"}
         </Text>
       </ScrollView>
     </SafeAreaView>
