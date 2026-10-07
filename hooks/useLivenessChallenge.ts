@@ -112,6 +112,72 @@ const TICK_TENGAH_MANTAP = 3;
 const PEMULIHAN_CAHAYA_MS = 450;
 
 // ===========================================================================
+// TANTANGAN ACAK - penahan pemutaran video
+// ===========================================================================
+//
+// Pengujian perangkat 7 Oktober 2026 memastikan dua hal sekaligus: penyodoran
+// foto sudah tertahan, tetapi PEMUTARAN VIDEO wajah pemilik yang sedang
+// menoleh masih lolos. Sebabnya urutan tantangan dahulu TETAP - satu tolehan
+// ke sembarang sisi, lalu satu tolehan ke sisi sebaliknya - sehingga satu
+// rekaman berisi gerakan itu akan selalu cocok.
+//
+// YANG MEMBUAT REKAMAN GAGAL: tantangan yang baru diundi pada saat itu juga.
+// Rekaman dibuat sebelum tantangannya ada, jadi polanya sudah terkunci dan
+// tidak bisa menyesuaikan diri.
+//
+// MASALAH YANG HARUS DILALUI. Melabeli arah sebagai "kiri" atau "kanan"
+// menuntut kepastian tanda yaw di bawah pencerminan kamera depan, dan itu
+// tidak dapat dipastikan tanpa pengukuran di perangkat - alasan yang sama
+// yang dulu membuat tantangan ini sengaja tidak berlabel.
+//
+// JALAN KELUARNYA: arah dilabeli secara RELATIF, bukan mutlak. Tolehan
+// pertama bebas ke sisi mana pun, dan aplikasi mencatat tandanya. Tolehan
+// berikutnya diminta "ke sisi yang sama" atau "ke sisi sebaliknya" terhadap
+// tolehan sebelumnya. Pengguna memahaminya tanpa perlu tahu kiri atau kanan,
+// aplikasi memeriksanya hanya dari perbandingan tanda, dan rekaman tetap
+// tidak bisa mengikutinya.
+//
+// Dengan tiga sampai empat tolehan, arah tolehan kedua dan seterusnya diundi
+// bebas, sehingga satu rekaman berpola tetap hanya cocok pada sebagian kecil
+// kemungkinan.
+//
+// JUJUR TENTANG BATASNYA: ini menaikkan ongkos serangan, bukan menghapusnya.
+// Penyerang yang menyiapkan rekaman untuk setiap kemungkinan, atau memakai
+// pemalsuan wajah waktu-nyata, tetap dapat menembus. Yang benar-benar
+// menutupnya hanya model anti-spoof pasif - analisis tekstur dan moire layar -
+// dan itu di luar cakupan tantangan gerak.
+
+/** Jumlah tolehan paling sedikit dan paling banyak dalam satu tantangan.
+ *  Tiga sudah membuat rekaman berpola tetap sering meleset; lebih dari empat
+ *  mulai melelahkan pengguna yang sah. */
+const MIN_TOLEHAN = 3;
+const MAKS_TOLEHAN = 4;
+
+/** Batas waktu menjawab SATU perintah, sejak perintahnya muncul.
+ *
+ *  Selain menyulitkan rekaman yang berjalan menurut jadwalnya sendiri, ini
+ *  juga menutup tantangan yang ditinggal pengguna separuh jalan.
+ *
+ *  BELUM DIUKUR DI PERANGKAT. Dipasang longgar supaya pengguna yang membaca
+ *  perintahnya pelan-pelan tidak ikut tergugurkan; dapat diperketat setelah
+ *  ada data dari pengujian sungguhan. */
+const BATAS_WAKTU_PERINTAH_MS = 7000;
+
+/** Arah tolehan yang diminta, relatif terhadap tolehan sebelumnya. */
+type ArahDiminta = "sama" | "lawan";
+
+/** Mengundi rencana tantangan untuk satu sesi.
+ *  Keluarannya arah untuk tolehan KEDUA dan seterusnya; tolehan pertama
+ *  selalu bebas karena belum ada acuan untuk dibandingkan. */
+function undiRencana(): ArahDiminta[] {
+  const jumlah =
+    MIN_TOLEHAN + Math.floor(Math.random() * (MAKS_TOLEHAN - MIN_TOLEHAN + 1));
+  return Array.from({ length: jumlah - 1 }, () =>
+    Math.random() < 0.5 ? "sama" : "lawan",
+  );
+}
+
+// ===========================================================================
 // PENJAGA KESINAMBUNGAN WAJAH
 // ===========================================================================
 //
@@ -177,24 +243,20 @@ function masihSinambung(
  */
 export type HasilPengikatan = "ok" | "ulangi" | "gagal";
 
-type Phase =
-  | "first-turn"
-  | "return-center"
-  | "second-turn"
-  | "confirm-center"
-  | "binding"
-  | "passed";
+type Phase = "turn" | "center" | "confirm-center" | "binding" | "passed";
 
 const MSG = {
   frame: "Posisikan wajah Anda di dalam bingkai",
   near: "Dekatkan wajah Anda ke kamera",
   first: "Tolehkan kepala perlahan ke satu sisi",
   center: "Bagus - hadapkan lagi ke tengah",
-  second: "Sekarang toleh ke sisi sebaliknya",
+  sama: "Toleh lagi ke sisi yang SAMA",
+  lawan: "Sekarang toleh ke sisi SEBALIKNYA",
   confirm: "Terakhir - hadapkan wajah lurus ke kamera",
   binding: "Memeriksa identitas, mohon tunggu...",
   ulangi: "Wajah kurang jelas - hadapkan lurus ke kamera sekali lagi",
   putus: "Wajah sempat hilang dari kamera - tantangan diulang dari awal",
+  lambat: "Terlalu lama - tantangan diulang dari awal",
   passed: "Deteksi aktif berhasil - silakan ambil foto",
 } as const;
 
@@ -205,9 +267,15 @@ export function useLivenessChallenge(
   // per frame dan harus stabil (tidak dibuat ulang tiap render), jadi ia
   // tidak boleh menutup nilai state yang bisa basi. useState hanya untuk
   // nilai yang benar-benar dirender.
-  const phaseRef = useRef<Phase>("first-turn");
-  const firstSignRef = useRef<-1 | 0 | 1>(0);
+  const phaseRef = useRef<Phase>("turn");
   const ulangMutuRef = useRef(0);
+  // Rencana tantangan sesi ini, diundi ulang tiap kali tantangan dimulai.
+  const rencanaRef = useRef<ArahDiminta[]>(undiRencana());
+  // Berapa tolehan yang sudah sah dikerjakan, dan ke arah mana yang terakhir.
+  const tolehanKeRef = useRef(0);
+  const tandaTerakhirRef = useRef<-1 | 1>(1);
+  // Kapan perintah yang sedang berjalan ditampilkan - dasar batas waktu.
+  const perintahSejakRef = useRef(Date.now());
   // Penjaga kesinambungan: kotak wajah pada tick sebelumnya, dan berapa tick
   // berturut-turut wajah tidak terbaca.
   const kotakRef = useRef<KotakWajah | null>(null);
@@ -225,18 +293,27 @@ export function useLivenessChallenge(
   const [passed, setPassed] = useState(false);
   const [instruction, setInstruction] = useState<string>(MSG.first);
   const [step, setStep] = useState(0);
+  const [total, setTotal] = useState(rencanaRef.current.length + 2);
   const [isBinding, setIsBinding] = useState(false);
 
-  /** Mulai dari nol dengan pesan tertentu. */
+  /** Mulai dari nol dengan pesan tertentu, DAN mengundi rencana baru.
+   *
+   *  Pengundian ulang di sini disengaja: percobaan yang gagal lalu dimulai
+   *  lagi harus memperoleh tantangan yang berbeda. Kalau rencananya tetap,
+   *  penyerang cukup mengulang sampai rekamannya kebetulan cocok. */
   const resetDenganPesan = useCallback((pesan: string) => {
-    phaseRef.current = "first-turn";
-    firstSignRef.current = 0;
+    rencanaRef.current = undiRencana();
+    phaseRef.current = "turn";
+    tolehanKeRef.current = 0;
+    tandaTerakhirRef.current = 1;
+    perintahSejakRef.current = Date.now();
     ulangMutuRef.current = 0;
     kotakRef.current = null;
     tickHilangRef.current = 0;
     tickTengahRef.current = 0;
     setPassed(false);
     setStep(0);
+    setTotal(rencanaRef.current.length + 2);
     setIsBinding(false);
     setInstruction(pesan);
   }, []);
@@ -247,12 +324,12 @@ export function useLivenessChallenge(
 
   const jalankanPengikatan = useCallback(async () => {
     const bind = onBindRef.current;
-    // Tanpa callback pengikatan, perilakunya kembali seperti semula: lulus
-    // begitu tolehan kedua selesai. Sengaja TIDAK menolak diam-diam, supaya
-    // pemanggil yang lupa memasang onBind tidak mengunci penggunanya.
+    // Tanpa callback pengikatan, tantangan dinyatakan lulus begitu seluruh
+    // tolehan selesai. Sengaja TIDAK menolak diam-diam, supaya pemanggil
+    // yang lupa memasang onBind tidak mengunci penggunanya.
     if (!bind) {
       phaseRef.current = "passed";
-      setStep(3);
+      setStep(rencanaRef.current.length + 2);
       setPassed(true);
       setInstruction(MSG.passed);
       return;
@@ -289,7 +366,7 @@ export function useLivenessChallenge(
 
     if (hasil === "ok") {
       phaseRef.current = "passed";
-      setStep(3);
+      setStep(rencanaRef.current.length + 2);
       setPassed(true);
       setInstruction(MSG.passed);
       return;
@@ -327,6 +404,11 @@ export function useLivenessChallenge(
         // belum memposisikan diri - bukan wajah yang hilang. Tanpa pembedaan
         // ini, membuka kamera lalu diam sebentar sudah memunculkan tuduhan
         // "wajah sempat hilang" sebelum tantangan dimulai.
+        // Jam batas waktu disetel ulang selama wajah belum terbaca. Tanpa ini,
+        // pengguna yang lambat memposisikan diri sudah kehabisan waktu
+        // sebelum sempat menoleh sekali pun - jam berjalan sejak perintahnya
+        // muncul, bukan sejak wajahnya terlihat.
+        perintahSejakRef.current = Date.now();
         if (kotakRef.current === null) {
           if (!sudahLulus) setInstruction(pesan);
           return;
@@ -363,44 +445,84 @@ export function useLivenessChallenge(
       if (sudahLulus) return;
 
       if (face.bounds.width / face.frameWidth < MIN_FACE_SIZE_RATIO) {
+        // Sama seperti saat wajah tidak terbaca: selama pengguna masih
+        // terlalu jauh, perintahnya belum benar-benar bisa dikerjakan, jadi
+        // jam batas waktunya belum boleh berjalan.
+        perintahSejakRef.current = Date.now();
         setInstruction(MSG.near);
         return;
       }
 
       const yaw = face.yawAngle;
 
+      // Batas waktu menjawab satu perintah. Selain menutup tantangan yang
+      // ditinggal separuh jalan, ini menyulitkan rekaman video: rekaman
+      // berjalan menurut jadwalnya sendiri dan harus kebetulan menoleh dalam
+      // jendela waktu yang baru dibuka aplikasi.
+      if (
+        phaseRef.current !== "confirm-center" &&
+        Date.now() - perintahSejakRef.current > BATAS_WAKTU_PERINTAH_MS
+      ) {
+        resetDenganPesan(MSG.lambat);
+        return;
+      }
+
+      /** Perintah untuk tolehan ke-n (n mulai dari 0). */
+      const perintahTolehan = (n: number): string =>
+        n === 0
+          ? MSG.first
+          : rencanaRef.current[n - 1] === "sama"
+            ? MSG.sama
+            : MSG.lawan;
+
       switch (phaseRef.current) {
-        case "first-turn":
-          if (Math.abs(yaw) >= TURN_DEG) {
-            firstSignRef.current = yaw >= 0 ? 1 : -1;
-            phaseRef.current = "return-center";
-            setStep(1);
-            setInstruction(MSG.center);
-          } else {
-            setInstruction(MSG.first);
+        case "turn": {
+          if (Math.abs(yaw) < TURN_DEG) {
+            setInstruction(perintahTolehan(tolehanKeRef.current));
+            break;
           }
-          break;
+          const tanda: -1 | 1 = yaw >= 0 ? 1 : -1;
+          const n = tolehanKeRef.current;
 
-        case "return-center":
-          if (Math.abs(yaw) <= CENTER_DEG) {
-            phaseRef.current = "second-turn";
-            setInstruction(MSG.second);
-          } else {
-            setInstruction(MSG.center);
+          // Tolehan pertama bebas - belum ada acuan pembanding. Sesudahnya
+          // arahnya harus sesuai rencana yang diundi, RELATIF terhadap
+          // tolehan sebelumnya.
+          if (n > 0) {
+            const diminta = rencanaRef.current[n - 1];
+            const harusnya: -1 | 1 =
+              diminta === "sama"
+                ? tandaTerakhirRef.current
+                : ((-tandaTerakhirRef.current) as -1 | 1);
+            if (tanda !== harusnya) {
+              // Menoleh ke sisi yang keliru bukan kecurangan, cuma salah
+              // dengar - cukup diminta ulang, jangan membatalkan tantangan.
+              setInstruction(perintahTolehan(n));
+              break;
+            }
           }
-          break;
 
-        case "second-turn":
-          // Harus melampaui ambang KE ARAH BERLAWANAN dari tolehan pertama.
-          if (
-            Math.abs(yaw) >= TURN_DEG &&
-            (yaw >= 0 ? 1 : -1) === -firstSignRef.current
-          ) {
+          tandaTerakhirRef.current = tanda;
+          tolehanKeRef.current = n + 1;
+          setStep(n + 1);
+          perintahSejakRef.current = Date.now();
+
+          if (tolehanKeRef.current > rencanaRef.current.length) {
             phaseRef.current = "confirm-center";
-            setStep(2);
             setInstruction(MSG.confirm);
           } else {
-            setInstruction(MSG.second);
+            phaseRef.current = "center";
+            setInstruction(MSG.center);
+          }
+          break;
+        }
+
+        case "center":
+          if (Math.abs(yaw) <= CENTER_DEG) {
+            phaseRef.current = "turn";
+            perintahSejakRef.current = Date.now();
+            setInstruction(perintahTolehan(tolehanKeRef.current));
+          } else {
+            setInstruction(MSG.center);
           }
           break;
 
@@ -428,7 +550,9 @@ export function useLivenessChallenge(
     passed,
     instruction,
     step,
-    total: 3,
+    // Jumlah langkah berbeda tiap sesi karena rencananya diundi - jadi ikut
+    // dilaporkan, bukan angka tetap.
+    total,
     isBinding,
     onFacesDetected,
     reset,
