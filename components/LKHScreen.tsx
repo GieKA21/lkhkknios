@@ -170,6 +170,20 @@ const PENGIKATAN_TTL_MS = 20_000;
 // kamera, geofence, tantangan keaktifan, dan ambang kemiripan - tidak
 // disentuh sama sekali.
 // ===========================================================================
+/** Kompensasi pencahayaan kamera depan, dalam satuan EV (stop). Positif
+ *  berarti lebih terang; +1 EV kira-kira menggandakan kecerahan terukurnya.
+ *
+ *  Dipasang karena fps 15 saja belum cukup di ruangan redup: dilaporkan dari
+ *  iPhone bahwa preview sesekali anjlok sampai wajahnya tak terdeteksi, lalu
+ *  pulih - dan selama bingkai gelap itu perintah tolehan tergantikan
+ *  "Posisikan wajah dalam bingkai".
+ *
+ *  ANGKA INI SEBUAH TOMBOL PUTAR. Kalau di bawah cahaya terang wajahnya malah
+ *  menjadi pucat dan mutunya gagal, turunkan ke 0,5. Kalau ruangan redup masih
+ *  terlalu gelap, naikkan ke 1,5 - tetapi ubah SATU hal saja dalam satu kali
+ *  uji, supaya ketahuan mana yang menolong. */
+const KOMPENSASI_PENCAHAYAAN_EV = 1;
+
 const ABAIKAN_PERIODE_KKN = true;
 
 /**
@@ -268,6 +282,16 @@ export default function LKHScreen() {
   // iOS SAJA. Di Android, memaksa fps mengharuskan VisionCamera menemukan
   // format yang mendukungnya persis; kalau tidak ada, sesi kamera gagal
   // dikonfigurasi dan preview tinggal HITAM. Biarkan Android memilih sendiri.
+  // setExposureBias MELEMPAR galat bila perangkatnya tidak mendukung bias
+  // atau nilainya di luar rentang, jadi keduanya diperiksa di sini. iOS saja:
+  // Android tidak mengalami gejalanya, dan mencerahkannya di sana hanya
+  // berisiko membuat wajah pucat tanpa menyelesaikan apa pun.
+  const biasPencahayaan = useMemo(() => {
+    if (Platform.OS !== "ios") return undefined;
+    if (!cameraDevice?.supportsExposureBias) return undefined;
+    return Math.min(KOMPENSASI_PENCAHAYAAN_EV, cameraDevice.maxExposureBias);
+  }, [cameraDevice]);
+
   const cameraConstraints = useMemo(
     () => (Platform.OS === "ios" ? [{ fps: 15 }] : undefined),
     [],
@@ -1271,16 +1295,23 @@ export default function LKHScreen() {
                 onError={faceQualityGate.onFaceDetectionError}
               />
             ) : (
-              // ===== iOS - JANGAN DIUBAH =====
-              // Jalur ini sudah teruji di iPhone. Bug preview hitam & sesi
-              // kamera yang dikonfigurasi ulang hanya muncul di Android, jadi
-              // perbaikannya sengaja tidak diberlakukan di sini.
+              // ===== jalur iOS =====
+              // Larangan menyentuh jalur ini DICABUT 9 Oktober 2026 atas
+              // permintaan pengguna. Yang tetap berlaku: penanganan preview
+              // hitam dan sesi kamera yang dikonfigurasi ulang adalah
+              // perbaikan khusus ANDROID dan sengaja tidak dibawa ke sini -
+              // gejalanya tidak pernah muncul di iPhone, jadi menerapkannya
+              // hanya menambah risiko tanpa menyelesaikan apa pun.
+              //
+              // Setiap perubahan di blok ini hanya dapat dibuktikan lewat
+              // build GitHub Actions; tidak ada Mac untuk mengujinya di sini.
               <FaceDetectorCamera
                 style={styles.camera}
                 device={cameraDevice}
                 isActive={isCameraVisible}
                 outputs={cameraOutputs}
                 constraints={cameraConstraints}
+                exposure={biasPencahayaan}
                 enableLowLightBoost
                 onFacesDetected={handleCameraFaces}
                 onError={faceQualityGate.onFaceDetectionError}
