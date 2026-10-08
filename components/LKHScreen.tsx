@@ -1322,12 +1322,58 @@ export default function LKHScreen() {
             )}
 
             <View style={styles.cameraBottomArea}>
-              <BlurView intensity={50} tint="dark" style={styles.liveStatusPill}>
-                <Text style={styles.liveStatusText}>
-                  {liveness.passed
-                    ? `${faceQualityGate.message} (akan diverifikasi setelah jepret)`
-                    : `${liveness.instruction} (langkah ${liveness.step}/${liveness.total})`}
-                </Text>
+              {/* Kemajuan tantangan sebagai strip, bukan "(langkah 2/5)" yang
+                  menempel di ujung kalimat - angka di dalam kalimat panjang
+                  terlewat begitu saja sambil menoleh. Jumlah stripnya berbeda
+                  tiap sesi karena rencananya diundi. */}
+              {!liveness.passed && (
+                <View style={styles.langkahBaris}>
+                  {Array.from({ length: liveness.total }, (_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.langkahStrip,
+                        i < liveness.step && styles.langkahStripAktif,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Kartu instruksi: baris utama besar, keterangan kecil di
+                  bawahnya, dan garis warna di kiri yang menandai nadanya.
+                  Peringatan ditahan 2 detik di dalam hook - tanpa itu pesannya
+                  ditimpa bingkai kamera berikutnya dan hanya tampak berkedip. */}
+              <BlurView
+                intensity={50}
+                tint="dark"
+                style={[
+                  styles.kartuInstruksi,
+                  liveness.nada === "peringatan" && styles.kartuPeringatan,
+                  liveness.nada === "lolos" && styles.kartuLolos,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.kartuGaris,
+                    liveness.nada === "peringatan" && styles.kartuGarisPeringatan,
+                    liveness.nada === "lolos" && styles.kartuGarisLolos,
+                  ]}
+                />
+                <View style={styles.kartuIsi}>
+                  <Text
+                    style={[
+                      styles.kartuJudul,
+                      liveness.nada === "peringatan" && styles.kartuJudulPeringatan,
+                      liveness.nada === "lolos" && styles.kartuJudulLolos,
+                    ]}
+                  >
+                    {liveness.instruction}
+                  </Text>
+                  <Text style={styles.kartuSub}>
+                    {liveness.passed ? faceQualityGate.message : liveness.sub}
+                  </Text>
+                </View>
               </BlurView>
 
               <TouchableOpacity
@@ -1949,19 +1995,64 @@ const styles = StyleSheet.create({
   cameraBottomArea: {
     alignItems: "center",
   },
-  liveStatusPill: {
+  langkahBaris: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 18,
+    gap: 7,
+    marginBottom: 12,
+  },
+  langkahStrip: {
+    width: 20,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.28)",
+  },
+  langkahStripAktif: {
+    backgroundColor: "#FFFFFF",
+  },
+  kartuInstruksi: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginHorizontal: 8,
+    paddingVertical: 16,
+    paddingLeft: 14,
+    paddingRight: 18,
     borderRadius: 20,
     overflow: "hidden",
     marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
   },
-  liveStatusText: {
-    fontSize: 13,
-    fontWeight: "600",
+  kartuPeringatan: {
+    borderColor: "rgba(255,178,36,0.34)",
+    backgroundColor: "rgba(38,27,10,0.55)",
+  },
+  kartuLolos: {
+    borderColor: "rgba(94,234,212,0.34)",
+    backgroundColor: "rgba(8,34,33,0.55)",
+  },
+  kartuGaris: {
+    width: 4,
+    borderRadius: 2,
+    marginRight: 13,
+    backgroundColor: "#FFFFFF",
+  },
+  kartuGarisPeringatan: { backgroundColor: "#FFB224" },
+  kartuGarisLolos: { backgroundColor: "#5EEAD4" },
+  kartuIsi: {
+    flex: 1,
+    gap: 5,
+  },
+  kartuJudul: {
+    fontSize: 18,
+    fontWeight: "700",
     color: "#FFFFFF",
+  },
+  kartuJudulPeringatan: { color: "#FFB224" },
+  kartuJudulLolos: { color: "#5EEAD4" },
+  kartuSub: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.68)",
   },
   // Menutupi kedipan hitam saat foto pengikatan diambil - lihat pemakaiannya
   // di dalam cameraSurface.

@@ -245,20 +245,60 @@ export type HasilPengikatan = "ok" | "ulangi" | "gagal";
 
 type Phase = "turn" | "center" | "confirm-center" | "binding" | "passed";
 
+/** Baris utama tiap pesan. Sengaja pendek: satu kalimat panjang pada pil
+ *  sempit melipat jadi tiga baris dan tidak terbaca sambil menoleh.
+ *  Keterangannya pindah ke SUB di bawah. */
 const MSG = {
-  frame: "Posisikan wajah Anda di dalam bingkai",
-  near: "Dekatkan wajah Anda ke kamera",
-  first: "Tolehkan kepala perlahan ke satu sisi",
-  center: "Bagus - hadapkan lagi ke tengah",
+  frame: "Posisikan wajah dalam bingkai",
+  near: "Dekatkan wajah ke kamera",
+  first: "Toleh perlahan ke satu sisi",
+  center: "Hadapkan lagi ke tengah",
   sama: "Toleh lagi ke sisi yang SAMA",
-  lawan: "Sekarang toleh ke sisi SEBALIKNYA",
-  confirm: "Terakhir - hadapkan wajah lurus ke kamera",
-  binding: "Memeriksa identitas, mohon tunggu...",
-  ulangi: "Wajah kurang jelas - hadapkan lurus ke kamera sekali lagi",
-  putus: "Wajah sempat hilang dari kamera - tantangan diulang dari awal",
-  lambat: "Terlalu lama - tantangan diulang dari awal",
-  passed: "Deteksi aktif berhasil - silakan ambil foto",
+  lawan: "Toleh ke sisi SEBALIKNYA",
+  confirm: "Hadapkan wajah lurus ke kamera",
+  binding: "Memeriksa identitas",
+  ulangi: "Hadapkan lurus sekali lagi",
+  putus: "Wajah sempat hilang",
+  lambat: "Terlalu lama",
+  passed: "Deteksi aktif berhasil",
 } as const;
+
+/** Baris kedua: keterangan kecil di bawah baris utama. Boleh kosong. */
+const SUB: Record<string, string> = {
+  [MSG.frame]: "Pastikan wajah terlihat utuh",
+  [MSG.near]: "Kira-kira sejengkal dari layar",
+  [MSG.first]: "Tahan sebentar sampai terdeteksi",
+  [MSG.center]: "Lalu tunggu perintah berikutnya",
+  [MSG.sama]: "Tahan sebentar sampai terdeteksi",
+  [MSG.lawan]: "Tahan sebentar sampai terdeteksi",
+  [MSG.confirm]: "Tahan sampai pemeriksaan selesai",
+  [MSG.binding]: "Jangan gerakkan perangkat dulu",
+  [MSG.ulangi]: "Wajah kurang jelas saat diperiksa",
+  [MSG.putus]: "Tantangan diulang dari tolehan pertama",
+  [MSG.lambat]: "Tantangan diulang dari tolehan pertama",
+  [MSG.passed]: "Silakan ambil foto presensi",
+};
+
+export type NadaPesan = "netral" | "peringatan" | "lolos";
+
+const NADA: Record<string, NadaPesan> = {
+  [MSG.ulangi]: "peringatan",
+  [MSG.putus]: "peringatan",
+  [MSG.lambat]: "peringatan",
+  [MSG.passed]: "lolos",
+};
+
+/** Berapa lama pesan peringatan ditahan sebelum boleh ditimpa.
+ *
+ *  TANPA INI PESANNYA TIDAK TERBACA. resetDenganPesan menulis pesannya, lalu
+ *  bingkai kamera berikutnya - sepersekian detik kemudian - menimpanya dengan
+ *  instruksi biasa. Pengguna hanya melihat kedipan. Dilaporkan dari pengujian
+ *  perangkat nyata: "ada tapi singkat banget". */
+const TAHAN_PESAN_MS = 2000;
+
+/** Pesan yang ditahan, dan pesan yang boleh menerobos penahanan. */
+const DITAHAN: readonly string[] = [MSG.ulangi, MSG.putus, MSG.lambat];
+const MENDESAK: readonly string[] = [MSG.binding, MSG.passed];
 
 export function useLivenessChallenge(
   onBind?: () => Promise<HasilPengikatan>,
@@ -296,6 +336,30 @@ export function useLivenessChallenge(
   const [total, setTotal] = useState(rencanaRef.current.length + 2);
   const [isBinding, setIsBinding] = useState(false);
 
+  /** Sampai kapan pesan peringatan yang sedang tampil tidak boleh ditimpa. */
+  const tahanSampaiRef = useRef(0);
+
+  /** Satu-satunya jalan menulis instruksi ke layar.
+   *
+   *  Peringatan selalu lolos dan membuka jendela penahanan; instruksi biasa
+   *  ditolak selama jendela itu terbuka. Tanpa penahanan ini, peringatan
+   *  ditimpa bingkai kamera berikutnya dan tidak sempat terbaca. */
+  const tampilkan = useCallback((pesan: string) => {
+    const kini = Date.now();
+    if (MENDESAK.includes(pesan)) {
+      tahanSampaiRef.current = 0;
+      setInstruction(pesan);
+      return;
+    }
+    if (DITAHAN.includes(pesan)) {
+      tahanSampaiRef.current = kini + TAHAN_PESAN_MS;
+      setInstruction(pesan);
+      return;
+    }
+    if (kini < tahanSampaiRef.current) return;
+    setInstruction(pesan);
+  }, []);
+
   /** Mulai dari nol dengan pesan tertentu, DAN mengundi rencana baru.
    *
    *  Pengundian ulang di sini disengaja: percobaan yang gagal lalu dimulai
@@ -315,8 +379,8 @@ export function useLivenessChallenge(
     setStep(0);
     setTotal(rencanaRef.current.length + 2);
     setIsBinding(false);
-    setInstruction(pesan);
-  }, []);
+    tampilkan(pesan);
+  }, [tampilkan]);
 
   const reset = useCallback(() => {
     resetDenganPesan(MSG.first);
@@ -331,11 +395,11 @@ export function useLivenessChallenge(
       phaseRef.current = "passed";
       setStep(rencanaRef.current.length + 2);
       setPassed(true);
-      setInstruction(MSG.passed);
+      tampilkan(MSG.passed);
       return;
     }
     setIsBinding(true);
-    setInstruction(MSG.binding);
+    tampilkan(MSG.binding);
     let hasil: HasilPengikatan;
     try {
       hasil = await bind();
@@ -368,20 +432,20 @@ export function useLivenessChallenge(
       phaseRef.current = "passed";
       setStep(rencanaRef.current.length + 2);
       setPassed(true);
-      setInstruction(MSG.passed);
+      tampilkan(MSG.passed);
       return;
     }
     if (hasil === "ulangi" && ulangMutuRef.current < MAKS_ULANG_MUTU) {
       ulangMutuRef.current += 1;
       phaseRef.current = "confirm-center";
       tickTengahRef.current = 0;
-      setInstruction(MSG.ulangi);
+      tampilkan(MSG.ulangi);
       return;
     }
     // Identitas tidak cocok, atau mutu gagal terus - ulang dari awal.
     // Pesannya ditentukan pemanggil lewat Alert; di sini cukup instruksi.
     resetDenganPesan(MSG.first);
-  }, [resetDenganPesan]);
+  }, [resetDenganPesan, tampilkan]);
 
   const onFacesDetected = useCallback(
     (faces: Face[]) => {
@@ -410,7 +474,7 @@ export function useLivenessChallenge(
         // muncul, bukan sejak wajahnya terlihat.
         perintahSejakRef.current = Date.now();
         if (kotakRef.current === null) {
-          if (!sudahLulus) setInstruction(pesan);
+          if (!sudahLulus) tampilkan(pesan);
           return;
         }
         tickHilangRef.current += 1;
@@ -418,7 +482,7 @@ export function useLivenessChallenge(
           resetDenganPesan(MSG.putus);
           return;
         }
-        if (!sudahLulus) setInstruction(pesan);
+        if (!sudahLulus) tampilkan(pesan);
         return;
       }
 
@@ -449,7 +513,7 @@ export function useLivenessChallenge(
         // terlalu jauh, perintahnya belum benar-benar bisa dikerjakan, jadi
         // jam batas waktunya belum boleh berjalan.
         perintahSejakRef.current = Date.now();
-        setInstruction(MSG.near);
+        tampilkan(MSG.near);
         return;
       }
 
@@ -478,7 +542,7 @@ export function useLivenessChallenge(
       switch (phaseRef.current) {
         case "turn": {
           if (Math.abs(yaw) < TURN_DEG) {
-            setInstruction(perintahTolehan(tolehanKeRef.current));
+            tampilkan(perintahTolehan(tolehanKeRef.current));
             break;
           }
           const tanda: -1 | 1 = yaw >= 0 ? 1 : -1;
@@ -496,7 +560,7 @@ export function useLivenessChallenge(
             if (tanda !== harusnya) {
               // Menoleh ke sisi yang keliru bukan kecurangan, cuma salah
               // dengar - cukup diminta ulang, jangan membatalkan tantangan.
-              setInstruction(perintahTolehan(n));
+              tampilkan(perintahTolehan(n));
               break;
             }
           }
@@ -508,10 +572,10 @@ export function useLivenessChallenge(
 
           if (tolehanKeRef.current > rencanaRef.current.length) {
             phaseRef.current = "confirm-center";
-            setInstruction(MSG.confirm);
+            tampilkan(MSG.confirm);
           } else {
             phaseRef.current = "center";
-            setInstruction(MSG.center);
+            tampilkan(MSG.center);
           }
           break;
         }
@@ -520,9 +584,9 @@ export function useLivenessChallenge(
           if (Math.abs(yaw) <= CENTER_DEG) {
             phaseRef.current = "turn";
             perintahSejakRef.current = Date.now();
-            setInstruction(perintahTolehan(tolehanKeRef.current));
+            tampilkan(perintahTolehan(tolehanKeRef.current));
           } else {
-            setInstruction(MSG.center);
+            tampilkan(MSG.center);
           }
           break;
 
@@ -538,17 +602,21 @@ export function useLivenessChallenge(
             }
           } else {
             tickTengahRef.current = 0;
-            setInstruction(MSG.confirm);
+            tampilkan(MSG.confirm);
           }
           break;
       }
     },
-    [jalankanPengikatan, resetDenganPesan],
+    [jalankanPengikatan, resetDenganPesan, tampilkan],
   );
 
   return {
     passed,
     instruction,
+    /** Baris kedua di bawah instruksi; kosong kalau pesannya tidak punya. */
+    sub: SUB[instruction] ?? "",
+    /** Mewarnai kartu instruksi: netral, peringatan, atau lolos. */
+    nada: NADA[instruction] ?? ("netral" as NadaPesan),
     step,
     // Jumlah langkah berbeda tiap sesi karena rencananya diundi - jadi ikut
     // dilaporkan, bukan angka tetap.
