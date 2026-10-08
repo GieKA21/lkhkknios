@@ -204,6 +204,12 @@ export default function LKHScreen() {
   const [token, setToken] = useState<string>("");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [records, setRecords] = useState<{ [key: string]: LKHRecord }>({});
+  // Catatan absen dimuat secara asinkron, dan sampai selesai records masih {}
+  // sehingga alreadyAttendedToday terbaca false. Berpindah cepat dari Profil
+  // ke LKH menangkap jendela itu: tombol absen sempat hidup walau hari ini
+  // SUDAH absen, dan bisa tertekan. Pola yang dipakai sama dengan
+  // isCheckingEnrollment: tombol terkunci sampai statusnya pasti.
+  const [isCheckingRecords, setIsCheckingRecords] = useState(true);
 
   // Periode KKN dihitung dari data server, bukan tanggal hardcode. Server
   // punya dua sumber: per lokasi/kecamatan (wilayahKec.setting - lebih
@@ -504,11 +510,23 @@ export default function LKHScreen() {
   // dan referensinya berubah tiap render, jadi menurutinya malah membuat
   // efek ini jalan berulang.
   useEffect(() => {
+    // Cache lokal dibaca lebih dulu (tanpa jaringan) supaya status "sudah
+    // absen" diketahui hampir seketika; tarikan server di bawah menyusul dan
+    // menimpanya kalau berbeda.
+    AsyncStorage.getItem("@lkh_records")
+      .then((stored) => {
+        if (!stored) return;
+        setRecords(JSON.parse(stored));
+        setIsCheckingRecords(false);
+      })
+      .catch(() => {});
     loadUserProfile().then(() => {
       // Bersihkan dulu catatan bekas Mode Demo (fitur demo kini dihapus total)
       // SEBELUM menarik dari server, supaya tanggal yang cuma "demo" tidak lagi
       // tampil ungu dan mengikuti status server apa adanya (mis. merah).
-      purgeDemoRecords().finally(() => fetchServerLKH());
+      purgeDemoRecords().finally(() =>
+        fetchServerLKH().finally(() => setIsCheckingRecords(false)),
+      );
     });
     // Wajah terdaftar kini tinggal di server (lihat utils/faceEnrollment.ts).
     // Selaraskan dulu supaya instalasi baru / perangkat baru langsung
@@ -782,6 +800,16 @@ export default function LKHScreen() {
 
   const handleOpenAttendanceCamera = async () => {
     const today = new Date();
+
+    // Penjagaan kedua, bukan pengganti tombol yang terkunci. Keadaan tombol
+    // dihitung saat render; kalau catatan hari ini baru tiba sesudah jari
+    // menyentuh layar, tekanan itu sudah telanjur diteruskan. Pemeriksaan di
+    // sini berjalan pada nilai terbaru, jadi menutup sisa celahnya.
+    if (isCheckingRecords) return;
+    if (alreadyAttendedToday) {
+      Alert.alert("Sudah Absen", "Presensi hari ini sudah tercatat.");
+      return;
+    }
 
     if (!isWithinKKNPeriod(today)) {
       Alert.alert("Perhatian", "Hari ini bukan dalam periode aktif KKN.");
@@ -1538,16 +1566,20 @@ export default function LKHScreen() {
                 styles.attendanceButton,
                 (isCheckingLocation ||
                   isCheckingEnrollment ||
+                  isCheckingRecords ||
                   alreadyAttendedToday) &&
                   styles.attendanceButtonDisabled,
               ]}
               onPress={handleOpenAttendanceCamera}
               activeOpacity={0.85}
               disabled={
-                isCheckingLocation || isCheckingEnrollment || alreadyAttendedToday
+                isCheckingLocation ||
+                isCheckingEnrollment ||
+                isCheckingRecords ||
+                alreadyAttendedToday
               }
             >
-              {isCheckingLocation || isCheckingEnrollment ? (
+              {isCheckingLocation || isCheckingEnrollment || isCheckingRecords ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
                 <FontAwesome5
@@ -1561,6 +1593,8 @@ export default function LKHScreen() {
                   ? "Memeriksa lokasi..."
                   : isCheckingEnrollment
                     ? "Memeriksa data wajah..."
+                    : isCheckingRecords
+                      ? "Memeriksa catatan hari ini..."
                     : alreadyAttendedToday
                       ? "Sudah Absen Hari Ini"
                       : hasEnrollment

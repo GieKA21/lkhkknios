@@ -213,6 +213,13 @@ function undiRencana(): ArahDiminta[] {
  *  lama dari kedipan detektor saat kepala menoleh cepat, lebih singkat dari
  *  gerakan tangan menukar perangkat. */
 const MAKS_TICK_HILANG = 5;
+
+/** Berapa bingkai hilang yang ditelan diam-diam sebelum perintahnya diganti
+ *  "Posisikan wajah dalam bingkai". Menahan kedipan pencahayaan iPhone agar
+ *  tidak menghapus perintah tolehan yang sedang dikerjakan pengguna. Lebih
+ *  kecil daripada MAKS_TICK_HILANG, sehingga keluhan tetap sempat muncul
+ *  sebelum tantangan benar-benar diulang. */
+const TICK_SEBELUM_KELUHAN = 2;
 /** Lompatan posisi titik tengah wajah antar-tick, sebagai pecahan lebar
  *  frame. Gerak kepala yang wajar jauh di bawah ini. */
 const MAKS_LOMPAT_POSISI = 0.35;
@@ -523,7 +530,21 @@ export function useLivenessChallenge(
           resetDenganPesan(MSG.putus);
           return;
         }
-        if (!sudahLulus) tampilkan(pesan);
+        // JANGAN ganti perintahnya pada kedipan pertama.
+        //
+        // Pada iPhone, pencahayaan preview sesekali anjlok beberapa bingkai
+        // lalu pulih - lihat cameraConstraints di LKHScreen. Selama bingkai
+        // gelap itu wajah tidak terdeteksi, dan dulu perintah tolehan langsung
+        // tergantikan "Posisikan wajah dalam bingkai" lalu kembali lagi.
+        // Pengguna membaca itu sebagai layar yang berkedip-kedip dan kehilangan
+        // perintah yang sedang dikerjakannya.
+        //
+        // Hilangnya wajah tetap DIHITUNG seperti semula - hanya pengumumannya
+        // yang ditahan sampai benar-benar berulang. Penjaga kesinambungan dan
+        // batas MAKS_TICK_HILANG tidak dilonggarkan sedikit pun.
+        if (!sudahLulus && tickHilangRef.current > TICK_SEBELUM_KELUHAN) {
+          tampilkan(pesan);
+        }
         return;
       }
 
