@@ -163,6 +163,14 @@ const MAKS_TOLEHAN = 4;
  *  ada data dari pengujian sungguhan. */
 const BATAS_WAKTU_PERINTAH_MS = 7000;
 
+/** Batas waktu satu pemeriksaan identitas.
+ *
+ *  Longgar dengan sengaja: pemakaian pertama sesudah pemasangan harus
+ *  menanggung penyiapan modul asli, dan menggugurkannya terlalu cepat hanya
+ *  memindahkan kegagalan, bukan menghilangkannya. Yang dicegah di sini
+ *  adalah penantian TANPA UJUNG, bukan penantian yang lama. */
+const BATAS_WAKTU_PENGIKATAN_MS = 12000;
+
 /** Arah tolehan yang diminta, relatif terhadap tolehan sebelumnya. */
 type ArahDiminta = "sama" | "lawan";
 
@@ -260,6 +268,7 @@ const MSG = {
   ulangi: "Hadapkan lurus sekali lagi",
   putus: "Wajah sempat hilang",
   lambat: "Terlalu lama",
+  pengikatanLambat: "Pemeriksaan terlalu lama",
   passed: "Deteksi aktif berhasil",
 } as const;
 
@@ -276,6 +285,7 @@ const SUB: Record<string, string> = {
   [MSG.ulangi]: "Wajah kurang jelas saat diperiksa",
   [MSG.putus]: "Tantangan diulang dari tolehan pertama",
   [MSG.lambat]: "Tantangan diulang dari tolehan pertama",
+  [MSG.pengikatanLambat]: "Coba sekali lagi, biasanya lancar",
   [MSG.passed]: "Silakan ambil foto presensi",
 };
 
@@ -285,6 +295,7 @@ const NADA: Record<string, NadaPesan> = {
   [MSG.ulangi]: "peringatan",
   [MSG.putus]: "peringatan",
   [MSG.lambat]: "peringatan",
+  [MSG.pengikatanLambat]: "peringatan",
   [MSG.passed]: "lolos",
 };
 
@@ -297,7 +308,9 @@ const NADA: Record<string, NadaPesan> = {
 const TAHAN_PESAN_MS = 2000;
 
 /** Pesan yang ditahan, dan pesan yang boleh menerobos penahanan. */
-const DITAHAN: readonly string[] = [MSG.ulangi, MSG.putus, MSG.lambat];
+const DITAHAN: readonly string[] = [
+  MSG.ulangi, MSG.putus, MSG.lambat, MSG.pengikatanLambat,
+];
 const MENDESAK: readonly string[] = [MSG.binding, MSG.passed];
 
 export function useLivenessChallenge(
@@ -400,11 +413,39 @@ export function useLivenessChallenge(
     }
     setIsBinding(true);
     tampilkan(MSG.binding);
-    let hasil: HasilPengikatan;
+    // "lambat" hanya dipakai di dalam fungsi ini; HasilPengikatan yang
+    // dilihat pemanggil sengaja tidak ikut berubah.
+    let hasil: HasilPengikatan | "lambat";
     try {
-      hasil = await bind();
+      // BATAS WAKTU - tanpa ini layar bisa menggantung selamanya.
+      //
+      // bind() memotret, mengenali wajah, menghitung embedding, lalu
+      // membandingkannya. Kalau satu saja dari langkah itu tidak pernah
+      // selesai - kamera belum siap, modul asli masih disiapkan sesudah
+      // pemasangan, jaringan menggantung - setIsBinding(false) tidak pernah
+      // tercapai dan penutup "Memeriksa identitas" menetap. Satu-satunya
+      // jalan keluar bagi pengguna adalah menutup aplikasi. Dilaporkan dari
+      // perangkat pada 9 Oktober 2026.
+      //
+      // Lewat batas ini, tantangan diulang alih-alih menggantung. Percobaan
+      // berikutnya umumnya lancar karena biaya penyiapannya sudah terbayar.
+      hasil = await Promise.race<HasilPengikatan | "lambat">([
+        bind(),
+        new Promise<"lambat">((lanjut) =>
+          setTimeout(() => lanjut("lambat"), BATAS_WAKTU_PENGIKATAN_MS),
+        ),
+      ]);
     } catch {
       hasil = "ulangi";
+    }
+    if (hasil === "lambat") {
+      // Jangan pakai pesan "ulangi" yang biasa: sebabnya bukan mutu wajah,
+      // dan pengguna perlu tahu bahwa mengulang memang menolong.
+      setIsBinding(false);
+      kotakRef.current = null;
+      tickHilangRef.current = 0;
+      resetDenganPesan(MSG.pengikatanLambat);
+      return;
     }
     // JEDA PEMULIHAN PENCAHAYAAN - jangan dihapus tanpa membaca ini.
     //

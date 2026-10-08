@@ -225,7 +225,23 @@ function getModel(): Promise<TensorflowModel> {
  * melakukan apa pun.
  */
 export function warmUpFaceModel(): void {
-  void getModel().catch(() => {});
+  void (async () => {
+    const model = await getModel();
+    // MEMUAT SAJA TIDAK CUKUP - JANGAN SEDERHANAKAN MENJADI getModel().
+    //
+    // Biaya terbesar bukan membaca berkas modelnya, melainkan INFERENSI
+    // PERTAMA: di situ interpreter menyiapkan (dan pada iOS mengompilasi)
+    // grafnya. Versi lama fungsi ini hanya memanggil getModel(), sehingga
+    // biaya itu tetap jatuh pada pemeriksaan identitas di tengah tantangan -
+    // dilaporkan sebagai "stuck di Memeriksa identitas" sesudah pasang atau
+    // perbarui aplikasi, dan lancar pada percobaan kedua karena grafnya sudah
+    // tersiapkan.
+    //
+    // Satu lintasan atas buffer nol sudah menanggung seluruh biaya itu.
+    // Hasilnya dibuang; yang dibeli adalah penyiapannya.
+    const kosong = new Float32Array(MODEL_INPUT_SIZE * MODEL_INPUT_SIZE * 3);
+    await model.run([kosong.buffer as ArrayBuffer]);
+  })().catch(() => {});
 }
 
 // expo-image-manipulator gets the actual pixel dimensions right (it's how
