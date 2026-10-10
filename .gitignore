@@ -29,3 +29,6 @@ graphify-out/
 
 # Konfigurasi kunci API perkakas - jangan pernah masuk git
 setting.json
+
+# Setelan perkakas pengembangan - jangan ikut ke salinan yang diserahkan
+.claude/
