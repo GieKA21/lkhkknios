@@ -184,7 +184,17 @@ const PENGIKATAN_TTL_MS = 20_000;
  *  uji, supaya ketahuan mana yang menolong. */
 const KOMPENSASI_PENCAHAYAAN_EV = 1;
 
-const ABAIKAN_PERIODE_KKN = true;
+/** Saklar uji: true melewati pemeriksaan periode KKN sepenuhnya, sehingga
+ *  absen dapat dicoba pada tanggal berapa pun.
+ *
+ *  HARUS false pada berkas yang diserahkan. Nilainya sempat true selama
+ *  pengembangan supaya alur absen bisa diuji di luar jadwal KKN; dikembalikan
+ *  ke false pada 10 Oktober 2026.
+ *
+ *  Mematikannya TIDAK memblokir siapa pun secara tak terduga: isWithinKKNPeriod
+ *  tetap fail-open bila server belum mengirim tanggal periodenya, jadi yang
+ *  terkunci hanyalah tanggal yang memang di luar periode menurut data server. */
+const ABAIKAN_PERIODE_KKN = false;
 
 /**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
