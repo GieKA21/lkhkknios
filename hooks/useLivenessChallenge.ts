@@ -71,6 +71,16 @@ import { MIN_FACE_SIZE_RATIO } from "../utils/faceAuthNative";
  * pemeriksaan identitas. Menahannya butuh model anti-spoof pasif
  * (analisis tekstur/moire), di luar cakupan tantangan gerak.
  *
+ * BATAS KEDUA, DITAMBAHKAN SADAR PADA 18 OKTOBER 2026: sesudah lulus, wajah
+ * boleh hilang sampai ~2 detik tanpa membatalkan kelulusan (lihat
+ * MAKS_TICK_HILANG_LULUS). Batas lama 0,55 detik menolak pengguna sah yang
+ * sekadar menunduk mencari tombol rana - dilaporkan dari perangkat pada iOS
+ * maupun Android. Pertukarannya nyata: jendela untuk menyodorkan foto
+ * pemilik akun sesudah identitas terbukti ikut melebar menjadi ~2 detik.
+ * Jadi serangan tukar wajah pada daftar di atas TIDAK tertutup rapat - ia
+ * dipersempit oleh pemeriksaan identitas di dalam tantangan, bukan
+ * dihilangkan. Naskah harus menyatakannya apa adanya.
+ *
  * SIGN-CONVENTION AMAN: arah yaw positif/negatif bergantung konvensi ML Kit +
  * mirror kamera depan, yang tidak bisa diverifikasi tanpa perangkat. Maka
  * tantangan ini TIDAK memberi label kiri/kanan yang bisa salah: cukup "toleh
@@ -213,6 +223,28 @@ function undiRencana(): ArahDiminta[] {
  *  lama dari kedipan detektor saat kepala menoleh cepat, lebih singkat dari
  *  gerakan tangan menukar perangkat. */
 const MAKS_TICK_HILANG = 5;
+
+/** Batas yang sama, tetapi HANYA sesudah tantangan lulus: 18 tick pada
+ *  FACE_TICK_MS=110 kira-kira 2 detik.
+ *
+ *  SEBABNYA DILAPORKAN DARI PERANGKAT (18 Oktober 2026, iOS dan Android).
+ *  Pengguna menyelesaikan seluruh tolehan, identitasnya terbukti, lalu
+ *  menunduk sebentar mencari tombol rana - wajahnya hilang dari bingkai
+ *  kurang dari satu detik, penjaga di bawah membatalkan kelulusan, dan
+ *  tantangan diundi ulang dari nol. 0,55 detik jauh di bawah waktu manusia
+ *  memindahkan pandangan ke sebuah tombol, jadi batas lama praktis mustahil
+ *  dilewati pengguna sah yang memakai shutter.
+ *
+ *  HARGANYA, DAN INI HARUS JUJUR DICATAT DI NASKAH: jendela untuk menukar
+ *  wajah sesudah identitas terbukti ikut melebar dari ~0,55 detik menjadi
+ *  ~2 detik. Dua detik cukup untuk mengangkat foto pemilik akun ke depan
+ *  kamera. Serangan tukar wajah memang sudah tercatat terbuka pada naskah;
+ *  perubahan ini MEMPERLEBARNYA, bukan menutupnya. Dipilih sadar oleh
+ *  peneliti sebagai pertukaran demi kebergunaan.
+ *
+ *  Selama tantangan belum lulus, batasnya TIDAK dilonggarkan sedikit pun -
+ *  di fase itu pengguna memang sedang menatap kamera. */
+const MAKS_TICK_HILANG_LULUS = 18;
 
 /** Berapa bingkai hilang yang ditelan diam-diam sebelum perintahnya diganti
  *  "Posisikan wajah dalam bingkai". Menahan kedipan pencahayaan iPhone agar
@@ -386,6 +418,12 @@ export function useLivenessChallenge(
    *  lagi harus memperoleh tantangan yang berbeda. Kalau rencananya tetap,
    *  penyerang cukup mengulang sampai rekamannya kebetulan cocok. */
   const resetDenganPesan = useCallback((pesan: string) => {
+    // Satu baris diagnostik. Tanpa ini, "kok disuruh ulang" hanya bisa
+    // ditebak: ada empat sebab berbeda yang semuanya berakhir di sini, dan
+    // layar hanya memperlihatkan instruksinya, bukan alasannya.
+    console.log(
+      `[Liveness] tantangan diulang - sebab="${pesan}" fase=${phaseRef.current} tickHilang=${tickHilangRef.current}`,
+    );
     rencanaRef.current = undiRencana();
     phaseRef.current = "turn";
     tolehanKeRef.current = 0;
@@ -526,7 +564,12 @@ export function useLivenessChallenge(
           return;
         }
         tickHilangRef.current += 1;
-        if (tickHilangRef.current > MAKS_TICK_HILANG) {
+        // Sesudah lulus batasnya lebih longgar - lihat MAKS_TICK_HILANG_LULUS
+        // beserta catatan pertukaran keamanannya.
+        const batasHilang = sudahLulus
+          ? MAKS_TICK_HILANG_LULUS
+          : MAKS_TICK_HILANG;
+        if (tickHilangRef.current > batasHilang) {
           resetDenganPesan(MSG.putus);
           return;
         }
