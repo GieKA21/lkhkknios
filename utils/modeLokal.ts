@@ -98,8 +98,16 @@ const PROFIL_PESERTA = {
   fakultas: "Sains dan Teknologi",
   tahunMasuk: "2022",
   angkatan: "KKN Demo",
-  kecamatan: "",
-  kabupaten: "",
+  // Diisi supaya baris "Lokasi KKN" pada layar Profil tidak tampil sebagai
+  // koma telanjang - ProfileScreen merender `{kecamatan}, {kabupaten}` tanpa
+  // penjagaan, jadi dua nilai kosong menghasilkan ", " di layar.
+  //
+  // Aman walau poskoKoordinat null: resolvePoskoLocation() lalu mencoba
+  // geocoding Nominatim, dan penjaga menjawabnya dengan daftar kosong, jadi
+  // hasilnya tetap null dan geofence tetap jatuh ke jalur gagal-terbuka -
+  // tanpa satu pun permintaan keluar.
+  kecamatan: "Somba Opu",
+  kabupaten: "Gowa",
   poskoKoordinat: null,
   angkatanTanggalMulai: geser(-30),
   angkatanTanggalSelesai: geser(30),

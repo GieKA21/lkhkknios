@@ -56,12 +56,47 @@ pilih cabang `demo/seminar`, runner `macos-26`.
 **APK** — harus dari jalur tanpa spasi (`C:\lkh`), kalau tidak gradle gagal
 dengan "ninja still dirty":
 
+```bash
+# 1. segarkan sumber - WAJIB dari Bash, bukan PowerShell (pipe binernya rusak)
+cd "/c/Users/As Shadiq Nur/Documents/Skripsi/lkh-kkn-ios/lkh-kkn-ios"
+git archive demo/seminar | tar -x -C /c/lkh
+```
+
 ```powershell
+# 2. prebuild - JANGAN DILEWATI, lihat peringatan di bawah
 cd C:\lkh
-git -C "C:\Users\As Shadiq Nur\Documents\Skripsi\lkh-kkn-ios\lkh-kkn-ios" archive demo/seminar | tar -x -C C:\lkh
+npx expo prebuild --platform android
+
+# 3. build
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot"
 & "C:\lkh\android\gradlew.bat" -p "C:\lkh\android" assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
+
+### Kenapa langkah prebuild tidak boleh dilewati
+
+Melewatinya sudah sekali membuat APK yang **crash begitu kamera dibuka**:
+
+```
+FATAL EXCEPTION: PreviewView.previewOutput:
+Cannot cast dynamic to a jsi::Value type
+```
+
+Sebabnya: `plugins/withRawPropsJsiValueFix.js` menyalakan feature flag
+`useRawPropsJsiValue` dengan menyuntik kode ke `MainApplication.kt`. Ia
+sebuah *config plugin*, jadi hanya berjalan saat `expo prebuild`. Dan folder
+`android/` **tidak terlacak git** - ia hasil generate - sehingga suntikannya
+tidak ikut tersimpan di repo. Membangun langsung dengan gradle memakai
+`MainApplication.kt` lama yang belum ditambal, dan Nitro gagal membaca prop
+`previewOutput`.
+
+Periksa sesudah prebuild:
+
+```bash
+grep -c useRawPropsJsiValue /c/lkh/android/app/src/main/java/com/gieka21/lkhkknios/MainApplication.kt   # harus 1
+```
+
+Build iOS lewat Actions aman dari jebakan ini - workflow-nya memang
+menjalankan `expo prebuild --platform ios --clean`.
 
 `git archive` menimpa berkas sumber tapi mempertahankan `node_modules` dan
 cache gradle, yang menghemat banyak waktu. `C:\lkh` bukan repo git, jadi
