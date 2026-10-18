@@ -586,12 +586,27 @@ export default function LKHScreen() {
   }, []);
 
   // Jadwalkan ulang notifikasi pengingat absen (10:00 & 20:00) setiap kali
-  // data laporan berubah - otomatis dibatalkan begitu hari ini sudah absen.
+  // data laporan berubah - otomatis dibatalkan begitu hari ini sudah absen,
+  // ATAU begitu periode KKN lewat.
+  //
+  // kknPeriod ikut jadi dependensi, bukan hanya records: periodenya datang
+  // dari profil server dan bisa terisi SESUDAH render pertama. Tanpa itu,
+  // penjadwalan pertama memakai periode kosong - yang dianggap fail-open -
+  // dan pengingatnya terlanjur terpasang untuk hari itu.
   useEffect(() => {
-    scheduleDailyAttendanceReminders(!!records[toDateKey(new Date())]).catch(
-      () => {},
-    );
-  }, [records]);
+    scheduleDailyAttendanceReminders(
+      !!records[toDateKey(new Date())],
+      isWithinKKNPeriod(new Date()),
+    ).catch(() => {});
+    // isWithinKKNPeriod SENGAJA tidak masuk daftar dependensi. Ia dideklarasikan
+    // jauh di bawah efek ini sebagai `const`, sedangkan daftar dependensi
+    // dievaluasi saat render pada baris ini juga - menyebutkannya di situ
+    // melempar "Cannot access before initialization" dan aplikasinya mati saat
+    // dibuka. Memanggilnya di DALAM badan efek aman, karena badan efek baru
+    // berjalan sesudah seluruh komponen selesai dirender. Satu-satunya yang
+    // dibacanya dan bisa berubah adalah kknPeriod, dan itu sudah didaftarkan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, kknPeriod]);
 
   // Sinkron OTOMATIS senyap: begitu ada laporan offline yang belum terkirim,
   // coba kirim sekali di latar (tanpa modal/alert), di samping tombol manual.
