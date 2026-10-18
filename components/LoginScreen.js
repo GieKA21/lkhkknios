@@ -18,6 +18,7 @@ import {
 import { getDeviceInfoObject, APP_VERSION, API_USER_AGENT } from "../utils/deviceInfo";
 import { API_BASE } from "../utils/api";
 import { fetchPembimbing } from "../utils/pembimbingApi";
+import { MODE_LOKAL, masukDemo } from "../utils/modeLokal";
 import Constants from "expo-constants";
 
 /**
@@ -476,6 +477,42 @@ export default function LoginScreen({ onLoginSuccess }) {
               </View>
             )}
           </TouchableOpacity>
+
+          {/* Tombol demo. Hanya ada pada build MODE LOKAL (EXPO_PUBLIC_SUMBER
+              =lokal); pada build biasa seluruh blok ini tidak dirender, jadi
+              tidak ada pintu masuk tanpa sandi di aplikasi yang sebenarnya.
+              Perannya mengikuti tab aktif, supaya satu tombol melayani dua
+              peran tanpa menambah kekacauan di layar. */}
+          {MODE_LOKAL && (
+            <>
+              <TouchableOpacity
+                style={styles.demoButton}
+                onPress={async () => {
+                  await masukDemo(activeTab === "dosen" ? "pembimbing" : "peserta");
+                  if (onLoginSuccess) onLoginSuccess();
+                }}
+                disabled={isLoading}
+                activeOpacity={0.8}
+              >
+                <View style={styles.buttonContent}>
+                  <MaterialCommunityIcons
+                    name="flask-outline"
+                    size={20}
+                    color="#1D6F42"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.demoButtonText}>
+                    {activeTab === "dosen"
+                      ? "MASUK DEMO - DOSEN"
+                      : "MASUK DEMO - MAHASISWA"}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+              <Text style={styles.demoNote}>
+                Mode demo: data contoh, tidak terhubung server.
+              </Text>
+            </>
+          )}
         </View>
 
         {/* Angkanya dibaca dari app.json, bukan ditulis tangan seperti
@@ -595,6 +632,29 @@ const styles = StyleSheet.create({
   buttonContent: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  // Tombol demo dibuat BERGARIS, bukan terisi, supaya jelas bukan tombol
+  // utama dan tidak tertukar dengan LOGIN saat diperagakan.
+  demoButton: {
+    backgroundColor: "#FFF",
+    borderWidth: 1.5,
+    borderColor: "#1D6F42",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  demoButtonText: {
+    color: "#1D6F42",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  demoNote: {
+    marginTop: 6,
+    textAlign: "center",
+    fontSize: 11,
+    color: "#777",
   },
   loginButtonText: {
     color: "#FFF",

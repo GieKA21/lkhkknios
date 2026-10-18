@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 
+import { MODE_LOKAL } from "./modeLokal";
+
 /**
  * Location-based attendance restriction: blocks absen when the device is
  * further than MAX_DISTANCE_KM from the student's posko (KKN post).
@@ -183,6 +185,21 @@ export interface GeofenceCheckResult {
 export async function checkAttendanceLocation(
   poskoLocation: Coordinates | null,
 ): Promise<GeofenceCheckResult> {
+  // MODE LOKAL: GPS dilewati sepenuhnya - tanpa izin, tanpa penguncian satelit.
+  // Bukan untuk melonggarkan pemeriksaan, tapi karena ruang seminar tertutup:
+  // getCurrentPositionAsync({High}) bisa gagal di dalam gedung dan melempar
+  // LocationUnavailableError, dan itu akan mematikan peragaan tepat di
+  // depan penguji. Jalur ini SAMA dengan jalur gagal-terbuka yang sudah ada
+  // untuk posko yang tidak diketahui, jadi perilakunya bukan hal baru.
+  if (MODE_LOKAL) {
+    return {
+      allowed: true,
+      distanceKm: null,
+      locationUnresolved: true,
+      userLocation: { latitude: 0, longitude: 0 },
+    };
+  }
+
   const permission = await Location.requestForegroundPermissionsAsync();
   if (permission.status !== "granted") {
     throw new LocationPermissionDeniedError(

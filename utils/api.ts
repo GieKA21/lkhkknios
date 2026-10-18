@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import { API_USER_AGENT, APP_VERSION, getDeviceInfoStr } from "./deviceInfo";
+import { MODE_LOKAL } from "./modeLokal";
 
 /**
  * Lapisan tipis di atas fetch() untuk API LKH KKN.
@@ -155,12 +156,25 @@ export async function apiGet<T>(
  * abu (lihat catatan di deviceInfo.ts).
  * ------------------------------------------------------------------ */
 
+// MODE LOKAL: kedua fungsi ini memulangkan string kosong, sehingga tidak ada
+// URL foto remote yang pernah terbentuk.
+//
+// Ini SATU-SATUNYA tempat yang bisa menutup celah tersebut. <Image> di React
+// Native memuat gambar di sisi native dan TIDAK melewati global.fetch, jadi
+// penjaga di modeLokal.ts secara struktural tidak dapat menangkapnya. Kalau
+// URL-nya tetap dibentuk, <Image> akan menembak server kampus langsung.
+// Celahnya bukan teoretis: LoginScreen memetakan foto dengan fallback
+// `|| "274131.jpg"`, jadi profil yang fotonya kosong pun tetap menghasilkan
+// nama berkas. Memotong di sini membuat seluruh jalur jatuh ke avatar inisial.
+
 export function profilePhotoUrl(fotoName: string): string {
+  if (MODE_LOKAL) return "";
   return `${API_BASE}/api/profil-peserta?profil=${fotoName}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
 }
 
 /** Foto profil DOSEN pembimbing (/api/profil-pembimbing?profil=pegFoto). */
 export function pembimbingPhotoUrl(fotoName: string): string {
+  if (MODE_LOKAL) return "";
   return `${API_BASE}/api/profil-pembimbing?profil=${fotoName}&device_info=${getDeviceInfoStr()}&version=${APP_VERSION}`;
 }
 
@@ -212,6 +226,12 @@ export async function getCachedProfilePhoto(
   remoteUrl: string,
   token: string,
 ): Promise<string | null> {
+  // MODE LOKAL: unduhan foto dilewati. FileSystem.downloadAsync() TIDAK
+  // melewati global.fetch, jadi penjaga di modeLokal.ts tidak menangkapnya -
+  // ini satu-satunya panggilan jaringan yang harus ditutup di tempatnya.
+  // Memulangkan null membuat pemanggil jatuh ke avatar inisial, yang tampil
+  // benar di iOS maupun Android (berkas file:// lokal tidak tampil di Android).
+  if (MODE_LOKAL) return null;
   try {
     const [srcUrl, localUri] = await Promise.all([
       AsyncStorage.getItem(PHOTO_SRC_URL_KEY),
