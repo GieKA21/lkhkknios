@@ -1,5 +1,11 @@
 # Build iOS IPA tanpa Mac lokal.
 #
+# CABANG INI (demo/seminar) MENGHASILKAN BUILD DEMO, BUKAN BUILD ASLI.
+# EXPO_PUBLIC_SUMBER=lokal disetel di tingkat job di bawah, dan itulah yang
+# menyalakan mode lokal di utils/modeLokal.ts: seluruh permintaan ke server
+# kampus dijawab dari data contoh di dalam aplikasi. Nama IPA-nya berakhiran
+# "-demo" supaya tidak pernah tertukar dengan build asli dari main.
+#
 # Jalankan manual dari tab Actions ("Build iOS IPA" -> Run workflow), lalu
 # unduh artifact di halaman run. Namanya memuat versi dan nomor build,
 # misalnya "lkh-kkn-ios-v1.0.0-build7" - nomor build yang lebih besar selalu
@@ -43,6 +49,14 @@ jobs:
     # itulah sebab build sebelumnya gagal.
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    # Disetel di tingkat JOB, bukan pada satu langkah. Variabel EXPO_PUBLIC_*
+    # disisipkan Metro ke dalam bundel JS, dan bundel itu dibuat di DALAM
+    # langkah `xcodebuild archive` (fase "Bundle React Native code and
+    # images"). Kalau variabelnya hanya ada di langkah lain, bundelnya
+    # terbentuk tanpa mode lokal dan IPA-nya jadi build biasa yang menghadap
+    # server kampus - gagal tanpa pesan apa pun sampai dicoba di panggung.
+    env:
+      EXPO_PUBLIC_SUMBER: lokal
     steps:
       - uses: actions/checkout@v4
 
@@ -94,8 +108,9 @@ jobs:
             cfg.expo.ios.buildNumber=process.env.GITHUB_RUN_NUMBER;
             fs.writeFileSync("app.json",JSON.stringify(cfg,null,2)+"\n");'
           VERSION=$(node -p 'require("./app.json").expo.version')
-          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER-demo" >> "$GITHUB_ENV"
           echo "Versi aplikasi $VERSION, nomor build $GITHUB_RUN_NUMBER"
+          echo "MODE: demo (EXPO_PUBLIC_SUMBER=$EXPO_PUBLIC_SUMBER)"
 
       - name: Generate native iOS project (prebuild + pod install)
         env:
