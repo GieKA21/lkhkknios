@@ -9,8 +9,7 @@ Buka aplikasi. Di layar login ada tombol bergaris hijau **MASUK DEMO** dan
 tulisan kecil "Mode demo: data contoh, tidak terhubung server".
 
 **Kalau tombol itu tidak ada, build-nya BUKAN demo** — jangan dipakai untuk
-peragaan. Artinya `EXPO_PUBLIC_SUMBER=lokal` tidak sampai ke Metro saat
-bundel dibuat.
+peragaan. Artinya build-nya dibuat dari cabang lain, bukan `demo/seminar`.
 
 Nama berkasnya juga ditandai: IPA dari Actions berakhiran `-demo`.
 
@@ -47,26 +46,42 @@ membuktikannya — bukan mencobanya sambil wifi menyala.
 
 ## Membangun ulang
 
+Saklarnya ada di dalam sumber (`MODE_LOKAL` di `utils/modeLokal.ts`), bukan
+variabel lingkungan — jadi tidak ada yang bisa lupa disetel. Yang menentukan
+hanya satu: **bangun dari cabang `demo/seminar`.**
+
 **IPA** — tab Actions di GitHub, workflow "Build iOS IPA", Run workflow,
-pilih cabang `demo/seminar`, runner `macos-26`. Variabelnya sudah disetel di
-dalam workflow cabang ini.
+pilih cabang `demo/seminar`, runner `macos-26`.
 
 **APK** — harus dari jalur tanpa spasi (`C:\lkh`), kalau tidak gradle gagal
 dengan "ninja still dirty":
 
 ```powershell
+cd C:\lkh
+git -C "C:\Users\As Shadiq Nur\Documents\Skripsi\lkh-kkn-ios\lkh-kkn-ios" archive demo/seminar | tar -x -C C:\lkh
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot"
-$env:EXPO_PUBLIC_SUMBER = "lokal"
 & "C:\lkh\android\gradlew.bat" -p "C:\lkh\android" assembleRelease -PreactNativeArchitectures=arm64-v8a
 ```
 
-Sumber di `C:\lkh` disegarkan dengan `git archive demo/seminar | tar -x -C /c/lkh`
-— cara itu menimpa berkas sumber tapi mempertahankan `node_modules` dan cache
-gradle, yang menghemat banyak waktu.
+`git archive` menimpa berkas sumber tapi mempertahankan `node_modules` dan
+cache gradle, yang menghemat banyak waktu. `C:\lkh` bukan repo git, jadi
+sumbernya memang harus disegarkan seperti itu setiap kali — kalau tidak,
+APK-nya dibangun dari sumber lama.
 
-**Variabelnya wajib ada saat bundel dibuat**, bukan sesudahnya. Tanpa itu
-hasilnya build biasa yang menghadap server kampus, dan tidak ada pesan galat
-apa pun yang memberi tahu — baru kelihatan saat dicoba.
+Hasilnya di `C:\lkh\android\app\build\outputs\apk\release\app-release.apk`.
+
+## Cara memastikan sebuah build benar-benar demo
+
+Teks `Mode lokal:` hanya bertahan di bundel kalau `MODE_LOKAL` bernilai
+benar; kalau salah, minifier membuang seluruh isi penjaganya. Jadi:
+
+```bash
+unzip -p app-release.apk assets/index.android.bundle | grep -c "Mode lokal:"
+```
+
+Hasil `1` berarti build demo. Hasil `0` berarti build biasa — jangan dipakai.
+Nama data contoh seperti "Mahasiswa Demo" TIDAK bisa dipakai sebagai patokan,
+karena konstanta tingkat modul tetap ikut terbundel walau saklarnya mati.
 
 ## Kalau ada yang bertanya
 

@@ -5,15 +5,27 @@ import { DEMO_TOKEN } from "./demoMode";
 /**
  * MODE LOKAL - build demo untuk seminar proposal.
  *
- * Dinyalakan HANYA lewat variabel lingkungan saat build:
+ * SAKLARNYA ADALAH KONSTANTA DI BAWAH, DAN CABANG INILAH SAKLARNYA. Berkas
+ * ini hanya ada di cabang `demo/seminar`; `main` tidak memuatnya sama sekali,
+ * jadi build asli tidak mungkin ikut menyala.
  *
- *     EXPO_PUBLIC_SUMBER=lokal
+ * KENAPA KONSTANTA, BUKAN EXPO_PUBLIC_*. Variabel lingkungan sebenarnya
+ * BEKERJA di sini - Metro memang menyisipkannya, dan itu sudah diukur:
+ * dengan EXPO_PUBLIC_SUMBER=lokal bundelnya 3.208.406 byte, tanpa variabel
+ * (plus --reset-cache) 3.205.919 byte, selisih 2.487 byte karena minifier
+ * membuang isi penjaga begitu nilainya false.
  *
- * Tanpa variabel itu seluruh berkas ini tidak berpengaruh apa pun: penjaga
- * tidak dipasang, tombol demo tidak muncul, dan aplikasi berjalan seperti
- * biasa menghadap server kampus. Jadi berkas ini aman berada di cabang mana
- * pun - yang membedakan build demo dan build asli adalah variabelnya, bukan
- * kodenya.
+ * Masalahnya bukan apakah ia bekerja, tapi betapa mudah ia LUPA DISETEL.
+ * Cache transform Metro menyimpan hasil penyisipan per berkas dan TIDAK
+ * memperhitungkan variabel lingkungan, jadi sesudah sekali membangun dengan
+ * variabel itu, build berikutnya tanpa variabel pun tetap memakai hasil
+ * lamanya - dua build yang sumbernya sama menghasilkan bundel identik meski
+ * variabelnya berbeda. Artinya variabelnya tidak bisa dipercaya sebagai
+ * penentu, dan salahnya tidak kelihatan: build-nya tetap "BUILD SUCCESSFUL".
+ *
+ * Konstanta tidak punya ruang untuk salah seperti itu. Ia ada di dalam
+ * sumber, ikut tercatat di git, dan terbaca langsung tanpa perlu diingat
+ * saat membangun.
  *
  * KENAPA PENJAGA DI fetch(), BUKAN TAMBALAN DI TIAP PEMANGGIL.
  * Panggilan jaringan di aplikasi ini ada di enam tempat, dan dua di antaranya
@@ -28,7 +40,12 @@ import { DEMO_TOKEN } from "./demoMode";
  * kontribusi penelitiannya; melonggarkannya akan membuat demonya tidak
  * membuktikan apa pun. Mode lokal hanya memutus SERVER, bukan pengenalannya.
  */
-export const MODE_LOKAL = process.env.EXPO_PUBLIC_SUMBER === "lokal";
+// Tipenya ditulis `boolean`, bukan dibiarkan disimpulkan sebagai `true`.
+// Tanpa anotasi itu TypeScript mempersempit tipenya menjadi literal `true`,
+// lalu setiap `if (!MODE_LOKAL)` di berkas lain dianggap cabang yang tak
+// mungkin tercapai - dan pemeriksa tipe mulai mengeluhkan kode yang justru
+// kita perlukan tetap ada supaya saklarnya bisa dibalik.
+export const MODE_LOKAL: boolean = true;
 
 /**
  * Host server kampus dikenali dari NAMA DOMAINNYA, bukan dengan mengimpor
