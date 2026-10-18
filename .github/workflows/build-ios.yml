@@ -56,6 +56,11 @@ jobs:
     # itulah sebab build sebelumnya gagal.
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    # Dibutuhkan langkah "Unggah IPA sebagai aset release" di bawah. Tanpa
+    # ini GITHUB_TOKEN hanya punya izin baca pada banyak repo, dan
+    # `gh release create` gagal dengan 403.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -161,8 +166,35 @@ jobs:
 
       # Nama artifact ikut memuat versi + nomor build, jadi di halaman
       # Actions terlihat langsung mana yang terbaru tanpa harus membuka run.
+      # Dibiarkan tidak mematikan run. Kuota penyimpanan artifact akun ini
+      # sudah penuh, dan menghapus artifact lama TIDAK langsung melegakannya -
+      # GitHub menghitung ulang pemakaian tiap 6-12 jam. Dua build berturut
+      # gagal di langkah ini padahal IPA-nya sudah jadi, jadi kegagalannya
+      # tidak boleh lagi menjatuhkan seluruh run.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: ${{ env.IPA_NAME }}
           path: ${{ env.IPA_NAME }}.ipa
           retention-days: 14
+
+      # Jalan keluar yang sebenarnya: aset RELEASE dihitung ke penyimpanan
+      # repo (repo ini 5 MB), BUKAN ke kuota artifact yang sudah penuh - jadi
+      # cara ini bekerja sekarang tanpa menunggu penghitungan ulang.
+      #
+      # Repo ini privat, jadi release-nya juga privat. Ditandai prerelease dan
+      # memakai satu tag tetap, sehingga build demo berikutnya menimpa aset
+      # yang sama alih-alih menumpuk release baru.
+      - name: Unggah IPA sebagai aset release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="demo-seminar"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --prerelease \
+              --title "Build demo seminar proposal" \
+              --notes "IPA mode demo dari cabang demo/seminar. Tidak terhubung server kampus; lihat DEMO-SEMINAR.md. Bukan build rilis."
+          fi
+          gh release upload "$TAG" "$IPA_NAME.ipa" --clobber
+          echo "Unduh dari: $(gh release view "$TAG" --json url -q .url)"
