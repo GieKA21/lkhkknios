@@ -12,6 +12,7 @@ import {
     Platform,
     SafeAreaView,
     ScrollView,
+    Share,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -64,6 +65,14 @@ import {
     profilePhotoUrl,
 } from "../utils/api";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+    catatSampel,
+    hapusSampel,
+    teksLaporan,
+    teksRingkas,
+    UKUR_WAKTU_VERIFIKASI,
+} from "../utils/ukurWaktu";
+import type { SampelWaktu } from "../utils/ukurWaktu";
 
 type LKHStatus = "synced" | "unsynced" | "empty" | "today" | "none";
 
@@ -975,15 +984,20 @@ export default function LKHScreen() {
 
     setIsProcessingFace(true);
     try {
+      // Titik waktu untuk uji waktu verifikasi - lihat utils/ukurWaktu.ts.
+      const t0 = performance.now();
       const photoFile = await photoOutput.capturePhotoToFile({}, {});
+      const t1 = performance.now();
       // capturePhotoToFile() returns a plain filesystem path, not a
       // file:// URL - every downstream consumer here (expo-image-
       // manipulator, expo-file-system, <Image> source) expects a URI.
       const photoUri = `file://${photoFile.filePath}`;
 
       let embedding: Float32Array;
+      let t2: number;
       try {
         embedding = await getFaceEmbedding(photoUri);
+        t2 = performance.now();
       } catch (error) {
         if (error instanceof NoFaceDetectedError) {
           setDebugPhotoUri(photoUri);
@@ -1004,6 +1018,7 @@ export default function LKHScreen() {
       // dibandingkan ambang - lihat utils/verificationAgent.ts (PEAS + tipe
       // agen) dan catatan median di similarityToEnrollment().
       const verdict = await decideAttendance(embedding);
+      const t3 = performance.now();
 
       if (verdict.kind === "not-enrolled") {
         // Set wajah hilang di tengah jalan (misal di-reset dari halaman
@@ -1019,6 +1034,43 @@ export default function LKHScreen() {
       // bilangan bulat) supaya angka kemiripan yang asli kelihatan buat
       // kalibrasi - "100%" yang dibulatkan bisa saja aslinya 99.4%.
       const similarityLabel = (verdict.similarity * 100).toFixed(2);
+
+      if (UKUR_WAKTU_VERIFIKASI) {
+        const ini: SampelWaktu = {
+          pada: new Date().toISOString(),
+          putusan: verdict.kind,
+          kemiripan: verdict.similarity,
+          ambilMs: t1 - t0,
+          embedMs: t2 - t1,
+          putusanMs: t3 - t2,
+          totalMs: t3 - t0,
+        };
+        const semua = await catatSampel(ini);
+        // Presensi sengaja tidak disimpan, supaya percobaan dapat diulang.
+        setIsCameraVisible(false);
+        Alert.alert(
+          verdict.kind === "accepted" ? "Berhasil" : "Wajah Tidak Cocok",
+          `Kemiripan ${similarityLabel}%.${teksRingkas(ini, semua)}`,
+          [
+            { text: "OK" },
+            {
+              text: `Bagikan data (${semua.length})`,
+              onPress: () => Share.share({ message: teksLaporan(semua) }),
+            },
+            {
+              text: "Hapus data",
+              style: "destructive",
+              onPress: () =>
+                Alert.alert("Hapus data ukur?", `${semua.length} percobaan akan dihapus.`, [
+                  { text: "Batal", style: "cancel" },
+                  { text: "Hapus", style: "destructive", onPress: () => hapusSampel() },
+                ]),
+            },
+          ],
+        );
+        return;
+      }
+
       if (verdict.kind === "rejected") {
         Alert.alert(
           "Wajah Tidak Cocok",
