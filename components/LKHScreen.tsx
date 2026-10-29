@@ -25,10 +25,9 @@ import { Camera, CommonResolutions, useCameraDevice, useCameraPermission, usePho
 // tidak pernah stabil. VisionCamera membandingkan `outputs` per-elemen, jadi
 // output yang berganti identitas memicu session.configure() -> unbindAll() di
 // SETIAP render. Lihat catatan di faceDetectorOutput di bawah.
-// iOS TETAP memakai <FaceDetectorCamera> seperti semula - jalur itu sudah
-// teruji di iPhone dan sengaja TIDAK diubah. Jalur createFaceDetectorOutput()
-// di bawah hanya dipakai Android.
-import { Camera as FaceDetectorCamera, createFaceDetectorOutput } from "react-native-vision-camera-face-detector";
+// Sejak 29 Oktober 2026 berlaku untuk iOS juga: di iPhone akibatnya force
+// close pada absen kedua atau ketiga dalam satu kali buka aplikasi.
+import { createFaceDetectorOutput } from "react-native-vision-camera-face-detector";
 import type { Face } from "react-native-vision-camera-face-detector";
 import {
     FACE_DETECTOR_OPTIONS,
@@ -440,15 +439,24 @@ export default function LKHScreen() {
   facesCallbackRef.current = handleCameraFaces;
   const cameraErrorRef = useRef(faceQualityGate.onFaceDetectionError);
   cameraErrorRef.current = faceQualityGate.onFaceDetectionError;
-  // ANDROID SAJA. Di iOS output detektor tetap dibuat oleh
-  // <FaceDetectorCamera> seperti semula (null di sini = jalur iOS tak berubah).
+  // KEDUA PLATFORM, sejak 29 Oktober 2026. Sebelumnya iOS memakai
+  // <FaceDetectorCamera>, yang membuat output baru di setiap render seperti
+  // dijelaskan di atas. Di iOS gejalanya bukan preview hitam melainkan force
+  // close: setiap output membawa detektor MLKit, antrean, dan
+  // AVCaptureVideoDataOutput sendiri, sehingga ~9 objek native per detik
+  // menumpuk selama tantangan dan dilepas bersamaan saat kamera ditutup -
+  // ada yang dilepas ketika MLKit masih memproses bingkai. Aplikasi selalu
+  // tertutup pada absen kedua atau ketiga dalam satu kali buka, tepat saat
+  // dialog hasil muncul (pengujian build 55).
+  //
+  // outputResolution "preview" hanya untuk iOS, menyamakan nilai bawaan
+  // pembungkus yang dipakai sebelumnya; Android dibiarkan seperti semula.
   const faceDetectorOutput = useMemo(
     () =>
-      Platform.OS !== "android"
-        ? null
-        : createFaceDetectorOutput({
+      createFaceDetectorOutput({
         onFacesDetected: (faces) => facesCallbackRef.current(faces),
         onError: (error) => cameraErrorRef.current(error),
+        ...(Platform.OS === "ios" ? { outputResolution: "preview" as const } : {}),
         performanceMode: "fast",
         // DIAGNOSTIK (dipertahankan dari sebelumnya): landmark &
         // classification live dimatikan untuk menghindari crash SIGSEGV MLKit
@@ -461,12 +469,8 @@ export default function LKHScreen() {
       }),
     [],
   );
-  // Di Android outputs = [detektor wajah stabil, foto]; di iOS tetap hanya
-  // [foto], karena <FaceDetectorCamera> menyisipkan output detektornya sendiri
-  // persis seperti sebelumnya.
   const cameraOutputs = useMemo(
-    () =>
-      faceDetectorOutput ? [faceDetectorOutput, photoOutput] : [photoOutput],
+    () => [faceDetectorOutput, photoOutput],
     [faceDetectorOutput, photoOutput],
   );
 
@@ -1352,7 +1356,12 @@ export default function LKHScreen() {
               //
               // Setiap perubahan di blok ini hanya dapat dibuktikan lewat
               // build GitHub Actions; tidak ada Mac untuk mengujinya di sini.
-              <FaceDetectorCamera
+              //
+              // Sejak 29 Oktober 2026 memakai <Camera> polos dengan output
+              // detektor wajah yang stabil, sama seperti Android - lihat
+              // faceDetectorOutput. Opsi detektornya (fast, tanpa landmark dan
+              // klasifikasi, minFaceSize) dipindah ke sana tanpa diubah.
+              <Camera
                 style={styles.camera}
                 device={cameraDevice}
                 isActive={isCameraVisible}
@@ -1360,16 +1369,7 @@ export default function LKHScreen() {
                 constraints={cameraConstraints}
                 exposure={biasPencahayaan}
                 enableLowLightBoost
-                onFacesDetected={handleCameraFaces}
                 onError={faceQualityGate.onFaceDetectionError}
-                performanceMode="fast"
-                // DIAGNOSTIK: landmark & classification live dimatikan untuk
-                // menghindari crash SIGSEGV MLKit di iOS 26. TIDAK memengaruhi
-                // pipeline foto still (utils/faceAuthNative.ts) yang tetap
-                // memakai FACE_DETECTOR_OPTIONS lengkap saat enroll/verify.
-                runLandmarks={false}
-                runClassifications={false}
-                minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
               />
             )
           )}
