@@ -1,35 +1,34 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { requireOptionalNativeModule } from "expo";
 import * as Location from "expo-location";
+import { Platform } from "react-native";
 
 import { MODE_LOKAL } from "./modeLokal";
 
 /**
- * Location-based attendance restriction: blocks absen when the device is
- * further than MAX_DISTANCE_KM from the student's posko (KKN post).
+ * Location-based attendance restriction, following the official Flutter app
+ * (lib/screens/peserta_lkh.dart, validasiLokasiMaps):
  *
- * NOTE ON SCOPE: the actual request was "within 10km or can't be outside the
- * kecamatan". Checking a real kecamatan administrative boundary needs either
- * a paid maps/geocoding API or bundled GeoJSON boundary data - not practical
- * for an Expo Go app with no backend. A fixed-radius check is used instead
- * as a practical approximation (a kecamatan is roughly this scale).
+ *   1. FAKE GPS FIRST. If the position is mocked, attendance is refused with
+ *      "Anda terdeteksi menggunakan lokasi palsu (fake GPS)" - regardless of
+ *      distance. Flutter reads geolocator's `Position.isMocked`; here Android
+ *      reads expo-location's `mocked` (Location.isFromMockProvider, the same
+ *      source geolocator uses) and iOS reads
+ *      `CLLocation.sourceInformation.isSimulatedBySoftware` through the local
+ *      module in modules/lokasi-palsu, because expo-location does not pass
+ *      that flag through on iOS.
+ *   2. DISTANCE. The distance in metres, rounded, must be <= the radius the
+ *      admin set for the kecamatan (`wilayahKec.setting.radius`), measured
+ *      from `wilayahKec.setting.koordinat`. Otherwise "Anda tidak berada
+ *      dalam area lokasi KKN anda".
  *
- * PER-ACCOUNT LOCATION: the posko location is resolved per student, not a
- * single hardcoded point for everyone (KKN students are placed at different
- * posko). Resolution order (see resolvePoskoLocation()):
- *   1. `wilayahKec.setting.koordinat` from the LKH server's /api/peserta
- *      response (captured in LoginScreen.js as profile.poskoKoordinat) -
- *      the real posko/kecamatan coordinate, when the server has it filled
- *      in. Observed to often be empty (not yet set by an admin), so...
- *   2. Fallback: geocode the student's kecamatan+kabupaten name (from the
- *      same profile) via OpenStreetMap Nominatim (free, no API key) to get
- *      an approximate kecamatan-center point. Cached locally so it's only
- *      looked up once per kecamatan.
- *   3. If neither works (no profile data, no internet for geocoding), the
- *      location can't be verified at all - checkAttendanceLocation() then
- *      *allows* the attendance rather than blocking it (fail-open), since
- *      face verification remains the primary anti-titip-absen defense and
- *      blocking a legitimate student over missing reference data would be
- *      worse than the geofence being skipped for that one attempt.
+ * WHEN THE SERVER HAS NO SETTING (observed: often empty, not yet filled in by
+ * an admin) this app deliberately differs from Flutter, which would simply
+ * fail on the missing value: resolvePoskoLocation() falls back to the
+ * geocoded kecamatan centre (OpenStreetMap Nominatim, cached) with a fixed
+ * MAX_DISTANCE_KM radius, and if even that is unavailable the distance check
+ * is skipped (fail-open) - face verification remains the primary
+ * anti-titip-absen defense. The fake-GPS check never depends on this.
  */
 
 export const MAX_DISTANCE_KM = 10;
@@ -43,7 +42,30 @@ export interface ProfileLocationHint {
   kecamatan?: string | null;
   kabupaten?: string | null;
   poskoKoordinat?: string | null;
+  /** `wilayahKec.setting.radius`, in metres. */
+  poskoRadius?: number | null;
 }
+
+/** The point and radius one attendance is checked against. */
+export interface AcuanLokasi {
+  titik: Coordinates;
+  radiusMeter: number;
+  /** true = both came from the server's kecamatan setting (Flutter's rule). */
+  dariServer: boolean;
+}
+
+/** Native iOS module in modules/lokasi-palsu; null on Android or in Expo Go. */
+const LokasiPalsu =
+  Platform.OS === "ios"
+    ? requireOptionalNativeModule<{
+        ambilLokasi(): Promise<{
+          latitude: number;
+          longitude: number;
+          akurasi: number;
+          simulasi: boolean;
+        }>;
+      }>("LokasiPalsu")
+    : null;
 
 export class LocationPermissionDeniedError extends Error {}
 export class LocationUnavailableError extends Error {}
@@ -64,6 +86,13 @@ export function distanceKm(a: Coordinates, b: Coordinates): number {
   const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 
   return EARTH_RADIUS_KM * c;
+}
+
+/** "850 m" below one kilometre, "2,4 km" above it (Indonesian decimal comma). */
+export function formatJarak(meter: number): string {
+  return meter < 1000
+    ? `${Math.round(meter)} m`
+    : `${(meter / 1000).toFixed(1).replace(".", ",")} km`;
 }
 
 function isValidCoordinate(c: Coordinates): boolean {
@@ -148,27 +177,43 @@ async function geocodeKecamatan(
 }
 
 /**
- * Resolves the posko location to check attendance against, for a specific
- * student's profile. See module doc comment for the resolution order.
+ * Resolves the point and radius to check attendance against, for a specific
+ * student's profile. Server setting first (koordinat AND radius, Flutter's
+ * rule); otherwise the fallback described in the module doc comment.
  */
 export async function resolvePoskoLocation(
   hint: ProfileLocationHint,
-): Promise<Coordinates | null> {
-  if (hint.poskoKoordinat) {
-    const parsed = parseCoordinateString(hint.poskoKoordinat);
-    if (parsed) return parsed;
+): Promise<AcuanLokasi | null> {
+  const titikServer = hint.poskoKoordinat
+    ? parseCoordinateString(hint.poskoKoordinat)
+    : null;
+  const radiusServer =
+    typeof hint.poskoRadius === "number" &&
+    Number.isFinite(hint.poskoRadius) &&
+    hint.poskoRadius > 0
+      ? hint.poskoRadius
+      : null;
+  if (titikServer && radiusServer !== null) {
+    return { titik: titikServer, radiusMeter: radiusServer, dariServer: true };
   }
-  if (hint.kecamatan && hint.kabupaten) {
-    return geocodeKecamatan(hint.kecamatan, hint.kabupaten);
-  }
-  return null;
+
+  const titik =
+    titikServer ??
+    (hint.kecamatan && hint.kabupaten
+      ? await geocodeKecamatan(hint.kecamatan, hint.kabupaten)
+      : null);
+  return titik
+    ? { titik, radiusMeter: MAX_DISTANCE_KM * 1000, dariServer: false }
+    : null;
 }
 
 export interface GeofenceCheckResult {
   allowed: boolean;
+  /** The position is simulated (fake GPS). Always means allowed = false. */
+  mocked: boolean;
   distanceKm: number | null;
-  /** True when the posko location couldn't be resolved at all - the check
-   * was skipped (fail-open) rather than genuinely passing. */
+  /** True when the posko location couldn't be resolved at all - the distance
+   * check was skipped (fail-open) rather than genuinely passing. */
   locationUnresolved: boolean;
   /** The device's own GPS coordinates at check time - callers that need to
    * submit "where this attendance happened" (e.g. syncing to the server)
@@ -177,13 +222,39 @@ export interface GeofenceCheckResult {
 }
 
 /**
+ * One GPS fix plus whether it is simulated. On iOS the native module supplies
+ * both; if it is missing (Expo Go, an older build) the fix comes from
+ * expo-location and the fake-GPS flag cannot be read, so it reports false.
+ */
+async function ambilPosisi(): Promise<{ coords: Coordinates; mocked: boolean }> {
+  if (LokasiPalsu) {
+    const hasil = await LokasiPalsu.ambilLokasi();
+    return {
+      coords: { latitude: hasil.latitude, longitude: hasil.longitude },
+      mocked: hasil.simulasi === true,
+    };
+  }
+  const position = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.High,
+  });
+  return {
+    coords: {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+    },
+    mocked: position.mocked === true,
+  };
+}
+
+/**
  * Gets the device's current GPS position and checks it against the given
- * posko location. Throws LocationPermissionDeniedError if permission is
- * denied, or LocationUnavailableError if a GPS fix can't be obtained (e.g.
- * indoors with no signal, location services off).
+ * point and radius, fake GPS first (see module doc comment). Throws
+ * LocationPermissionDeniedError if permission is denied, or
+ * LocationUnavailableError if a GPS fix can't be obtained (e.g. indoors with
+ * no signal, location services off).
  */
 export async function checkAttendanceLocation(
-  poskoLocation: Coordinates | null,
+  acuan: AcuanLokasi | null,
 ): Promise<GeofenceCheckResult> {
   // MODE LOKAL: GPS dilewati sepenuhnya - tanpa izin, tanpa penguncian satelit.
   // Bukan untuk melonggarkan pemeriksaan, tapi karena ruang seminar tertutup:
@@ -207,35 +278,32 @@ export async function checkAttendanceLocation(
     );
   }
 
-  let position: Location.LocationObject;
+  let posisi: { coords: Coordinates; mocked: boolean };
   try {
-    position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
+    posisi = await ambilPosisi();
   } catch {
     throw new LocationUnavailableError(
       "Tidak bisa mendapatkan lokasi GPS. Pastikan layanan lokasi aktif dan coba lagi di area terbuka.",
     );
   }
+  const userLocation = posisi.coords;
 
-  const userLocation: Coordinates = {
-    latitude: position.coords.latitude,
-    longitude: position.coords.longitude,
-  };
-
-  if (!poskoLocation) {
+  if (!acuan) {
     return {
-      allowed: true,
+      allowed: !posisi.mocked,
+      mocked: posisi.mocked,
       distanceKm: null,
       locationUnresolved: true,
       userLocation,
     };
   }
 
-  const distance = distanceKm(poskoLocation, userLocation);
+  const distance = distanceKm(acuan.titik, userLocation);
 
   return {
-    allowed: distance <= MAX_DISTANCE_KM,
+    // Flutter compares whole metres: hitungRadius() returns meters.round().
+    allowed: !posisi.mocked && Math.round(distance * 1000) <= acuan.radiusMeter,
+    mocked: posisi.mocked,
     distanceKm: distance,
     locationUnresolved: false,
     userLocation,
