@@ -33,6 +33,9 @@ import { MODE_LOKAL } from "./modeLokal";
 
 export const MAX_DISTANCE_KM = 10;
 
+/** MODE LOKAL saja: berapa lama menunggu posisi untuk memeriksa lokasi palsu. */
+const BATAS_GPS_DEMO_MS = 8000;
+
 export interface Coordinates {
   latitude: number;
   longitude: number;
@@ -256,15 +259,33 @@ async function ambilPosisi(): Promise<{ coords: Coordinates; mocked: boolean }> 
 export async function checkAttendanceLocation(
   acuan: AcuanLokasi | null,
 ): Promise<GeofenceCheckResult> {
-  // MODE LOKAL: GPS dilewati sepenuhnya - tanpa izin, tanpa penguncian satelit.
-  // Bukan untuk melonggarkan pemeriksaan, tapi karena ruang seminar tertutup:
+  // MODE LOKAL: pemeriksaan jarak dilewati sepenuhnya. Bukan untuk
+  // melonggarkan pemeriksaan, tapi karena ruang seminar tertutup:
   // getCurrentPositionAsync({High}) bisa gagal di dalam gedung dan melempar
   // LocationUnavailableError, dan itu akan mematikan peragaan tepat di
   // depan penguji. Jalur ini SAMA dengan jalur gagal-terbuka yang sudah ada
   // untuk posko yang tidak diketahui, jadi perilakunya bukan hal baru.
+  //
+  // Pengecualiannya lokasi palsu: kalau posisi bisa didapat dalam
+  // BATAS_GPS_DEMO_MS, penandanya tetap diperiksa, supaya penolakan fake GPS
+  // dapat diperagakan. Gagal atau lambat -> tetap diizinkan seperti semula.
   if (MODE_LOKAL) {
+    let mocked = false;
+    try {
+      const izin = await Location.requestForegroundPermissionsAsync();
+      if (izin.status === "granted") {
+        const posisi = await Promise.race([
+          ambilPosisi(),
+          new Promise<null>((r) => setTimeout(() => r(null), BATAS_GPS_DEMO_MS)),
+        ]);
+        mocked = posisi?.mocked === true;
+      }
+    } catch {
+      // Tidak ada posisi di dalam gedung bukan alasan menggagalkan peragaan.
+    }
     return {
-      allowed: true,
+      allowed: !mocked,
+      mocked,
       distanceKm: null,
       locationUnresolved: true,
       userLocation: { latitude: 0, longitude: 0 },
