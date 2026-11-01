@@ -150,6 +150,12 @@ export default function LoginScreen({ onLoginSuccess }) {
               // admin) - kalau kosong, geofence otomatis fallback ke
               // geocoding nama kecamatan+kabupaten di atas.
               poskoKoordinat: data.wilayahKec?.setting?.koordinat || null,
+              // Radius area presensi (meter) yang diatur admin per kecamatan -
+              // dipakai bersama koordinat di atas, persis seperti aplikasi
+              // Flutter resmi (validasiLokasiMaps). Lihat utils/geofence.ts.
+              poskoRadius: Number.isFinite(Number(data.wilayahKec?.setting?.radius))
+                ? Number(data.wilayahKec.setting.radius)
+                : null,
               // Periode KKN dipakai untuk kalender di LKHScreen.tsx (lihat
               // isWithinKKNPeriod). Server punya dua sumber: periode per
               // angkatan (umum) dan periode per lokasi/kecamatan (setting -

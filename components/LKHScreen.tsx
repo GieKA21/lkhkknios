@@ -51,9 +51,9 @@ import type { HasilPengikatan } from "../hooks/useLivenessChallenge";
 import { scheduleDailyAttendanceReminders } from "../utils/notifications";
 import {
     checkAttendanceLocation,
+    formatJarak,
     LocationPermissionDeniedError,
     LocationUnavailableError,
-    MAX_DISTANCE_KM,
     resolvePoskoLocation,
 } from "../utils/geofence";
 import { APP_VERSION, API_USER_AGENT, getDeviceInfoStr } from "../utils/deviceInfo";
@@ -93,6 +93,8 @@ interface UserData {
   kecamatan: string | null;
   kabupaten: string | null;
   poskoKoordinat: string | null;
+  // wilayahKec.setting.radius, dalam meter - lihat utils/geofence.ts.
+  poskoRadius: number | null;
   // Dua sumber periode KKN dari server - lihat kknPeriod di bawah untuk
   // urutan prioritasnya.
   angkatanTanggalMulai: string | null;
@@ -219,6 +221,7 @@ export default function LKHScreen() {
     kecamatan: null,
     kabupaten: null,
     poskoKoordinat: null,
+    poskoRadius: null,
     angkatanTanggalMulai: null,
     angkatanTanggalSelesai: null,
     settingTanggalMulai: null,
@@ -654,6 +657,10 @@ export default function LKHScreen() {
           kecamatan: data.kecamatan || null,
           kabupaten: data.kabupaten || null,
           poskoKoordinat: data.poskoKoordinat || null,
+          // Profil dari login sebelum radius ikut disimpan tidak punya field
+          // ini; geofence lalu memakai cadangannya sampai pengguna login ulang.
+          poskoRadius:
+            typeof data.poskoRadius === "number" ? data.poskoRadius : null,
           angkatanTanggalMulai: data.angkatanTanggalMulai || null,
           angkatanTanggalSelesai: data.angkatanTanggalSelesai || null,
           settingTanggalMulai: data.settingTanggalMulai || null,
@@ -889,13 +896,26 @@ export default function LKHScreen() {
 
     setIsCheckingLocation(true);
     try {
-      const poskoLocation = await resolvePoskoLocation({
+      const acuanLokasi = await resolvePoskoLocation({
         kecamatan: userData.kecamatan,
         kabupaten: userData.kabupaten,
         poskoKoordinat: userData.poskoKoordinat,
+        poskoRadius: userData.poskoRadius,
       });
-      const { allowed, distanceKm, locationUnresolved, userLocation } =
-        await checkAttendanceLocation(poskoLocation);
+      const { allowed, mocked, distanceKm, locationUnresolved, userLocation } =
+        await checkAttendanceLocation(acuanLokasi);
+
+      // Urutan dan pesannya sama dengan aplikasi Flutter resmi
+      // (validasiLokasiMaps): lokasi palsu diperiksa lebih dulu, lalu jarak.
+      // Keduanya menghentikan proses sebelum kamera dibuka, jadi tidak ada
+      // presensi yang tersimpan.
+      if (mocked) {
+        Alert.alert(
+          "Lokasi Palsu",
+          "Anda terdeteksi menggunakan lokasi palsu (fake GPS)",
+        );
+        return;
+      }
       pendingCoordinatesRef.current = `${userLocation.latitude},${userLocation.longitude}`;
 
       if (locationUnresolved) {
@@ -905,10 +925,12 @@ export default function LKHScreen() {
         console.log(
           "Geofence dilewati: lokasi posko tidak bisa ditentukan untuk akun ini.",
         );
-      } else if (!allowed && distanceKm !== null) {
+      } else if (!allowed && distanceKm !== null && acuanLokasi) {
+        // Pesan utama persis seperti di Flutter; jaraknya ditambahkan karena
+        // tanpa angka itu mahasiswa tidak tahu seberapa jauh ia meleset.
         Alert.alert(
-          "Di Luar Jangkauan Posko",
-          `Anda berjarak ${distanceKm.toFixed(1)} km dari posko. Absensi hanya bisa dilakukan dalam radius ${MAX_DISTANCE_KM} km dari posko/kecamatan lokasi KKN.`,
+          "Di Luar Area KKN",
+          `Anda tidak berada dalam area lokasi KKN anda\n\nJarak Anda ${formatJarak(distanceKm * 1000)} dari titik lokasi KKN, batasnya ${formatJarak(acuanLokasi.radiusMeter)}.`,
         );
         return;
       }
@@ -1662,8 +1684,8 @@ export default function LKHScreen() {
               {isCheckingEnrollment
                 ? "Menyelaraskan data wajah dari server..."
                 : hasEnrollment
-                  ? `Wajah diverifikasi otomatis, dan absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`
-                  : `Sebelum absen, daftarkan wajah Anda lewat 3-5 foto selfie. Absen hanya bisa dalam radius ${MAX_DISTANCE_KM} km dari posko.`}
+                  ? "Wajah diverifikasi otomatis, dan absen hanya bisa di area lokasi KKN tanpa lokasi palsu."
+                  : "Sebelum absen, daftarkan wajah Anda lewat 3-5 foto selfie. Absen hanya bisa di area lokasi KKN tanpa lokasi palsu."}
             </Text>
 
             <View style={styles.legendContainer}>
