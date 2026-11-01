@@ -71,9 +71,17 @@ export default function FaceEnrollmentModal({
   // Resolusi sama dengan kamera absensi (LKHScreen). config & outputs
   // di-memo agar referensinya stabil - lihat komentar panjang di LKHScreen:
   // tanpa ini kamera dikonfigurasi ulang tiap render (kedip/gelap/crash).
+  //
+  // iOS: output baru setiap kali modal dibuka, karena setiap pembukaan
+  // <Modal> membuat sesi kamera baru dan output yang dipakai dua sesi
+  // membuat aplikasi force close saat sesi lama dilepas - lihat photoConfig
+  // di LKHScreen. Salinan objek resolusi yang memaksa usePhotoOutput membuat
+  // output baru. Android tetap satu output seumur komponen.
+  const sesiKamera = Platform.OS === "ios" ? visible : false;
   const photoConfig = useMemo(
-    () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
-    [],
+    () => ({ targetResolution: { ...CommonResolutions.FHD_16_9 } }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sesiKamera],
   );
   const photoOutput = usePhotoOutput(photoConfig);
   const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
