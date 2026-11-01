@@ -286,9 +286,27 @@ export default function LKHScreen() {
   // MobileFaceNet yang inputnya cuma 112x112.
   // config & outputs dimemo agar referensinya stabil (diminta dokumentasi
   // VisionCamera); penyebab kedip/gelap ditangani lewat constraints + throttle.
+  //
+  // iOS: stabil SELAMA satu kali kamera dibuka, tetapi BARU setiap kali
+  // kamera dibuka (sesiKamera naik di handleOpenAttendanceCamera). Di iOS
+  // kamera ada di dalam <Modal>, jadi setiap absen membuat AVCaptureSession
+  // baru, sedangkan VisionCamera tidak pernah melepas sesi lama - ia hanya
+  // stop() lalu configure([]), dan pada sesi yang sudah berhenti pelepasan
+  // output itu ditunda AVFoundation sampai sesinya di-dealloc. Sesi lama baru
+  // di-dealloc belakangan, bersama preview layer-nya, dan saat itu ia
+  // melepas output yang SUDAH dipasang di sesi baru: assert di
+  // -[AVCaptureOutput detachFromFigCaptureSession:] -> SIGABRT. Log crash
+  // build 55 dan 56 sama persis. Dengan output baru per sesi, output milik
+  // sesi lama tidak pernah dipakai sesi lain. Android tetap satu output
+  // seumur layar (sesiKamera tidak naik di sana).
+  const [sesiKamera, setSesiKamera] = useState(0);
   const photoConfig = useMemo(
-    () => ({ targetResolution: CommonResolutions.FHD_16_9 }),
-    [],
+    // Salinan objek resolusi, bukan konstanta yang sama: usePhotoOutput
+    // memo-nya bergantung pada identitas targetResolution, jadi salinan
+    // baru inilah yang membuatnya membuat output baru.
+    () => ({ targetResolution: { ...CommonResolutions.FHD_16_9 } }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sesiKamera],
   );
   const photoOutput = usePhotoOutput(photoConfig);
   // cameraOutputs dibentuk SETELAH handleCameraFaces (butuh output detektor
@@ -389,9 +407,10 @@ export default function LKHScreen() {
       console.error("Gagal mengikat identitas pada tantangan keaktifan", error);
       return "ulangi";
     }
-    // photoOutput dimemo dengan deps [] (lihat photoConfig), jadi referensi
-    // callback ini stabil - penting, karena ia ikut menentukan stabilitas
-    // onFacesDetected dan karenanya konfigurasi sesi kamera.
+    // photoOutput hanya berganti saat kamera dibuka ulang (lihat
+    // photoConfig), jadi selama kamera terbuka referensi callback ini stabil -
+    // penting, karena ia ikut menentukan stabilitas onFacesDetected dan
+    // karenanya konfigurasi sesi kamera.
   }, [photoOutput]);
 
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
@@ -438,9 +457,10 @@ export default function LKHScreen() {
   // tidak pernah sempat hidup. Analisis frame tetap jalan, itu sebabnya
   // deteksi wajah terlihat normal dan onError kamera tak pernah menyala.
   //
-  // Maka output dibuat SEKALI di sini (deps []) memakai API publik
-  // createFaceDetectorOutput(), dengan callback dialirkan lewat ref supaya
-  // identitas outputnya tidak pernah berubah meski komponen render ulang.
+  // Maka output dibuat SEKALI per kali kamera dibuka (deps [sesiKamera])
+  // memakai API publik createFaceDetectorOutput(), dengan callback dialirkan
+  // lewat ref supaya identitas outputnya tidak berubah meski komponen render
+  // ulang.
   const facesCallbackRef = useRef(handleCameraFaces);
   facesCallbackRef.current = handleCameraFaces;
   const cameraErrorRef = useRef(faceQualityGate.onFaceDetectionError);
@@ -473,7 +493,10 @@ export default function LKHScreen() {
         runClassifications: false,
         minFaceSize: FACE_DETECTOR_OPTIONS.minFaceSize,
       }),
-    [],
+    // sesiKamera: baru setiap kali kamera dibuka di iOS, alasannya sama
+    // dengan photoConfig di atas. Tetap stabil selama kamera terbuka.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sesiKamera],
   );
   const cameraOutputs = useMemo(
     () => [faceDetectorOutput, photoOutput],
@@ -935,6 +958,10 @@ export default function LKHScreen() {
     // wajah hidup yang hadir sekarang, bukan sekali seumur pemasangan.
     pengikatanAtRef.current = null;
     liveness.reset();
+    // Output kamera baru untuk sesi kamera baru (iOS saja) - lihat
+    // photoConfig. Dinaikkan bersama setIsCameraVisible supaya <Camera>
+    // dipasang langsung dengan output barunya, tanpa konfigurasi ulang.
+    if (Platform.OS === "ios") setSesiKamera((n) => n + 1);
     setIsCameraVisible(true);
   };
 
