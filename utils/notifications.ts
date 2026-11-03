@@ -44,16 +44,29 @@ function todayAt(hour: number, minute: number): Date {
 
 /**
  * (Re)schedules today's 10:00/20:00 attendance reminders, skipping times
- * that already passed and skipping entirely if `hasAttendedToday` is true.
- * Call this on app load and right after a successful attendance save.
+ * that already passed and skipping entirely if `hasAttendedToday` is true
+ * or the KKN period is no longer running.
+ *
+ * KENAPA PERIODE IKUT DIPERIKSA DI SINI. Dilaporkan dari perangkat pada
+ * 18 Oktober 2026: periode KKN angkatan ini berakhir 24 September, tetapi
+ * pengingat "Belum Absen LKH" tetap muncul tiap hari. Aplikasi menagih
+ * pekerjaan yang ia sendiri akan tolak - LKHScreen memblokir absen di luar
+ * periode lewat isWithinKKNPeriod(). Dulu syaratnya hanya "sudah absen hari
+ * ini", sehingga mahasiswa yang KKN-nya sudah selesai - yang selamanya tidak
+ * akan pernah absen lagi - justru diingatkan tanpa henti.
+ *
+ * Pembatalan di dua baris pertama dijalankan LEBIH DAHULU dan tanpa syarat,
+ * jadi pengingat yang terlanjur terjadwal sebelum periodenya habis ikut
+ * tercabut begitu fungsi ini dipanggil lagi.
  */
 export async function scheduleDailyAttendanceReminders(
   hasAttendedToday: boolean,
+  dalamPeriodeKKN: boolean,
 ): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(MORNING_REMINDER_ID).catch(() => {});
   await Notifications.cancelScheduledNotificationAsync(EVENING_REMINDER_ID).catch(() => {});
 
-  if (hasAttendedToday) return;
+  if (hasAttendedToday || !dalamPeriodeKKN) return;
 
   const granted = await requestNotificationPermissions();
   if (!granted) return;

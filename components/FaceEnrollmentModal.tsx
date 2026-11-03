@@ -77,6 +77,18 @@ export default function FaceEnrollmentModal({
   );
   const photoOutput = usePhotoOutput(photoConfig);
   const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
+  // ANDROID SAJA - preview yang mengalir tapi tak pernah tergambar sampai ada
+  // yang memaksa jendela menggambar ulang. Alasan lengkap di LKHScreen.
+  const [previewStarted, setPreviewStarted] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (!visible) {
+      setPreviewStarted(false);
+      return;
+    }
+    const fallback = setTimeout(() => setPreviewStarted(true), 600);
+    return () => clearTimeout(fallback);
+  }, [visible]);
   // 15fps + low-light boost: alasan lengkap ada di LKHScreen - selama ada
   // stream frame, iOS membatasi exposure ke satu durasi frame, jadi 30fps
   // membuat preview gelap di ruangan yang cahayanya sebenarnya cukup.
@@ -187,8 +199,7 @@ export default function FaceEnrollmentModal({
     }
   };
 
-  return (
-    <Modal visible={visible} animationType="slide">
+  const isi = (
       <View style={styles.container}>
         {hasPermission && cameraDevice ? (
           // Kamera BIASA (tanpa detektor wajah live). Pendaftaran tidak butuh
@@ -197,9 +208,18 @@ export default function FaceEnrollmentModal({
           // alignment). Melepas detektor live di sini MENGHILANGKAN sumber
           // force-close SIGSEGV MLKit di iOS 26 yang muncul saat mendaftar.
           <Camera
-            style={styles.camera}
+            style={[
+              styles.camera,
+              // Android: geser 1px sampai preview mulai -> memaksa layout pass.
+              Platform.OS === "android" && !previewStarted ? { bottom: 1 } : null,
+            ]}
             device={cameraDevice}
             isActive={visible}
+            onPreviewStarted={
+              Platform.OS === "android"
+                ? () => setPreviewStarted(true)
+                : undefined
+            }
             outputs={cameraOutputs}
             constraints={cameraConstraints}
             enableLowLightBoost={Platform.OS === "ios"}
@@ -323,13 +343,31 @@ export default function FaceEnrollmentModal({
           </View>
         )}
       </View>
-    </Modal>
+  );
+
+  return (
+    // ANDROID: sama seperti kamera absen di LKHScreen, layar ini TIDAK
+    // dibungkus <Modal>. Di Android <Modal> adalah Dialog berjendela sendiri
+    // dan PreviewView CameraX di dalamnya tidak pernah terkomposisi ke layar.
+    // iOS TETAP memakai <Modal> seperti semula.
+    Platform.OS === "android" ? (
+      visible ? <View style={styles.androidOverlay}>{isi}</View> : null
+    ) : (
+      <Modal visible={visible} animationType="slide">
+        {isi}
+      </Modal>
+    )
   );
 }
 
 const ACCENT = "#0E783D";
 
 const styles = StyleSheet.create({
+  androidOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
   container: {
     flex: 1,
     backgroundColor: "#000",

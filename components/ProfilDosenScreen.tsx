@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import {
   Alert,
   Image,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import { pembimbingPhotoUrl, profilePhotoHeaders } from "../utils/api";
 
 interface ProfilDosenScreenProps {
@@ -37,6 +40,7 @@ function initials(name: string): string {
 }
 
 export default function ProfilDosenScreen({ onLogout }: ProfilDosenScreenProps) {
+  const insets = useSafeAreaInsets();
   const [profile, setProfile] = useState<DosenProfile>({});
   const [token, setToken] = useState<string>("");
 
@@ -93,7 +97,18 @@ export default function ProfilDosenScreen({ onLogout }: ProfilDosenScreenProps) 
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          // Android: SafeAreaView react-native tidak berefek dan aplikasi
+          // menggambar di bawah system bar, jadi inset dipasang di konten -
+          // sama seperti layar peserta. Lihat LKHScreen.tsx.
+          Platform.OS === "android" && {
+            paddingTop: insets.top + 16,
+            paddingBottom: 120 + insets.bottom,
+          },
+        ]}
+      >
         <View style={styles.photoWrap}>
           {profile.foto ? (
             <Image
@@ -146,8 +161,7 @@ export default function ProfilDosenScreen({ onLogout }: ProfilDosenScreenProps) 
         </View>
 
         <Text style={styles.versionText}>
-          Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-          {Constants.expoConfig?.ios?.buildNumber ?? "?"})
+          Versi {Constants.expoConfig?.version ?? "?"}
         </Text>
       </ScrollView>
     </SafeAreaView>

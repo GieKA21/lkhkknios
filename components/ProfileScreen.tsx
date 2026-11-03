@@ -12,6 +12,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
     getResetQuota,
     MAX_FACE_RESETS,
@@ -52,6 +53,7 @@ function initials(name: string): string {
 }
 
 export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
+  const insets = useSafeAreaInsets();
   const [profileData, setProfileData] = useState<ProfileData>({
     nim: "",
     nama: "Memuat...",
@@ -75,8 +77,12 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
     max: MAX_FACE_RESETS,
     fromServer: false,
   });
-  // Foto profil gagal/absen -> avatar inisial, bukan lingkaran kosong.
-  const [photoFailed, setPhotoFailed] = useState(false);
+  // URI foto profil yang TERBUKTI gagal dimuat -> avatar inisial, bukan
+  // lingkaran kosong. Menyimpan URI-nya, bukan boolean: layar ini di-mount
+  // ulang tiap pindah tab dan uri-nya berganti dari remote ke berkas lokal di
+  // tengah jalan, jadi onError milik uri lama tidak boleh mematikan uri baru.
+  // Catatan lengkapnya ada di LKHScreen.tsx (failedPhotoUri).
+  const [failedPhotoUri, setFailedPhotoUri] = useState<string | null>(null);
 
   // Sengaja cuma jalan sekali saat mount - lihat catatan yang sama di
   // LKHScreen.tsx.
@@ -102,7 +108,11 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
         // foto:null (peserta tanpa foto profil) -> jangan paksa nama file bogus
         // yang berujung 404; kosongkan supaya render pakai avatar inisial.
         const dbFotoUrl = data.foto ? profilePhotoUrl(data.foto) : "";
-        setPhotoFailed(false);
+        setFailedPhotoUri(null);
+
+        // iOS: kosongkan dulu, jangan pasang URL remote (lihat catatan sama di
+        // LKHScreen). Berkas lokal dipasang di bawah, remote hanya cadangan.
+        const fotoAwal = Platform.OS === "ios" ? "" : dbFotoUrl;
 
         setProfileData({
           nim: data.nim,
@@ -114,7 +124,7 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
           angkatan: data.angkatan,
           kecamatan: data.kecamatan,
           kabupaten: data.kabupaten,
-          serverFotoUrl: dbFotoUrl,
+          serverFotoUrl: fotoAwal,
         });
 
         // iOS SAJA (lihat catatan sama di LKHScreen): unduh foto SEKALI ke
@@ -123,10 +133,10 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
         // pakai URL remote (sudah andal). Kalau gagal, URL remote jadi fallback.
         if (Platform.OS === "ios" && dbFotoUrl && savedToken) {
           getCachedProfilePhoto(dbFotoUrl, savedToken).then((localUri) => {
-            if (localUri) {
-              setPhotoFailed(false);
-              setProfileData((prev) => ({ ...prev, serverFotoUrl: localUri }));
-            }
+            // Cache gagal -> jatuh ke URL remote, biar tetap ada peluang tampil.
+            const uri = localUri || dbFotoUrl;
+            setFailedPhotoUri(null);
+            setProfileData((prev) => ({ ...prev, serverFotoUrl: uri }));
           });
         }
       }
@@ -171,10 +181,26 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      {/* SafeAreaView dari react-native hanya bekerja di iOS; di Android ia
+          View biasa tanpa inset, sehingga kartu teratas mepet ke jam dan
+          indikator jaringan. Inset ditambahkan ke KONTEN yang digulir saja,
+          bukan ke container, supaya lapisan penuh layar (mis. kamera) tetap
+          menutupi layar sampai ke tepi atas. */}
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          Platform.OS === "android" && {
+            paddingTop: insets.top + 16,
+            // Tab bar mengambang naik setinggi inset bawah - lihat catatan
+            // yang sama di LKHScreen.tsx.
+            paddingBottom: 110 + insets.bottom,
+          },
+        ]}
+      >
         <View style={styles.glassShadow}>
           <View style={styles.avatarContainer}>
-            {profileData.serverFotoUrl && !photoFailed ? (
+            {profileData.serverFotoUrl &&
+            failedPhotoUri !== profileData.serverFotoUrl ? (
               <Image
                 source={{
                   uri: profileData.serverFotoUrl,
@@ -186,7 +212,8 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
                     : {}),
                 }}
                 style={styles.avatarImage}
-                onError={() => setPhotoFailed(true)}
+                // Catat URI-nya, bukan sekadar "gagal" - lihat failedPhotoUri.
+                onError={() => setFailedPhotoUri(profileData.serverFotoUrl)}
               />
             ) : (
               <View style={[styles.avatarImage, styles.avatarFallback]}>
@@ -307,8 +334,7 @@ export default function ProfileScreen({ onLogout }: ProfileScreenProps) {
             baru. Ini versi APLIKASI, bukan APP_VERSION yang dikirim ke server
             di utils/deviceInfo.ts. */}
         <Text style={styles.versionText}>
-          Versi {Constants.expoConfig?.version ?? "?"} (build{" "}
-          {Constants.expoConfig?.ios?.buildNumber ?? "?"})
+          Versi {Constants.expoConfig?.version ?? "?"}
         </Text>
       </ScrollView>
     </SafeAreaView>

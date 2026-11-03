@@ -135,16 +135,32 @@ function withRawPropsJsiValueAppDelegate(config) {
 // loadReactNative() has already run RN's own one-time
 // ReactNativeFeatureFlags.override(...), so - exactly as on iOS - we cannot call
 // override() again and must dangerouslyForceOverride() afterwards. That REPLACES
-// the whole flag set, so this provider re-declares the same four flags that
-// DefaultNewArchitectureEntryPoint's Stable_Android override sets (that class is
-// final, so it cannot simply be subclassed) and adds ours on top.
+// the whole flag set.
+//
+// THE BASE CLASS MATTERS, AND GETTING IT WRONG COSTS THE CAMERA PREVIEW.
+// DefaultNewArchitectureEntryPoint installs
+// ReactNativeFeatureFlagsOverrides_RNOSS_Stable_Android, which extends
+// ReactNativeNewArchitectureFeatureFlagsDefaults(bridgelessEnabled) - and it is
+// that BASE class which turns on enableBridgelessArchitecture and
+// useNativeViewConfigsInBridgelessMode. An earlier version of this plugin
+// extended plain ReactNativeFeatureFlagsDefaults instead, which silently reset
+// both to false. Without native view configs, React Native could not resolve the
+// props of Nitro views and fell back to the legacy ViewManager path, logging
+//   "ViewManagerPropertyUpdater: Could not find generated setter for class
+//    com.margelo.nitro.camera.views.HybridPreviewViewManager"
+// and DROPPING every prop - including previewOutput. The camera session still
+// bound Preview/ImageAnalysis/ImageCapture, so face detection and photo capture
+// worked, but nothing ever provided a Surface to the Preview use case and the
+// preview stayed BLACK. Stable_Android is final so it cannot be subclassed; the
+// object below therefore extends the same base class and re-declares the same
+// four flags, then adds ours on top.
 const ANDROID_IMPORTS =
   "import com.facebook.react.internal.featureflags.ReactNativeFeatureFlags\n" +
-  "import com.facebook.react.internal.featureflags.ReactNativeFeatureFlagsDefaults\n";
+  "import com.facebook.react.internal.featureflags.ReactNativeNewArchitectureFeatureFlagsDefaults\n";
 
 const ANDROID_OVERRIDE =
   "    ReactNativeFeatureFlags.dangerouslyForceOverride(\n" +
-  "        object : ReactNativeFeatureFlagsDefaults() {\n" +
+  "        object : ReactNativeNewArchitectureFeatureFlagsDefaults(true) {\n" +
   "          override fun useFabricInterop(): Boolean = true\n" +
   "          override fun enableFabricRenderer(): Boolean = true\n" +
   "          override fun useTurboModules(): Boolean = true\n" +

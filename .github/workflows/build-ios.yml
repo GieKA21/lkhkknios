@@ -43,6 +43,11 @@ jobs:
     # itulah sebab build sebelumnya gagal.
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
+    # Dibutuhkan langkah "Unggah IPA sebagai aset release" di bawah. Tanpa
+    # ini GITHUB_TOKEN hanya punya izin baca, dan `gh release create` gagal
+    # dengan 403.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -144,8 +149,38 @@ jobs:
 
       # Nama artifact ikut memuat versi + nomor build, jadi di halaman
       # Actions terlihat langsung mana yang terbaru tanpa harus membuka run.
+      #
+      # DIBIARKAN TIDAK MEMATIKAN RUN. Kuota penyimpanan artifact akun ini
+      # sudah penuh, dan menghapus artifact lama TIDAK langsung melegakannya -
+      # GitHub menghitung ulang pemakaian tiap 6-12 jam. Run #53 gagal persis
+      # di sini padahal IPA-nya sudah selesai dibuat, jadi kegagalan langkah
+      # ini tidak boleh lagi menjatuhkan seluruh build.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: ${{ env.IPA_NAME }}
           path: ${{ env.IPA_NAME }}.ipa
           retention-days: 14
+
+      # Jalan keluar yang sebenarnya: aset RELEASE dihitung ke penyimpanan
+      # repo, BUKAN ke kuota artifact yang sudah penuh - jadi cara ini bekerja
+      # sekarang tanpa menunggu penghitungan ulang.
+      #
+      # Tag-nya SENGAJA berbeda dari cabang demo. "ios-uji" memuat build dari
+      # cabang pengembangan yang menghadap server kampus sungguhan;
+      # "demo-seminar" memuat build mode demo. Memakai satu tag untuk keduanya
+      # akan membuat IPA demo dan IPA asli saling menimpa, dan yang terpasang
+      # di perangkat jadi tidak bisa dipastikan yang mana.
+      - name: Unggah IPA sebagai aset release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="ios-uji"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --prerelease \
+              --title "Build uji iOS" \
+              --notes "IPA tanpa tanda tangan dari cabang pengembangan, menghadap server LKH KKN sungguhan. Build pengujian, bukan rilis."
+          fi
+          gh release upload "$TAG" "$IPA_NAME.ipa" --clobber
+          echo "Unduh dari: $(gh release view "$TAG" --json url -q .url)"

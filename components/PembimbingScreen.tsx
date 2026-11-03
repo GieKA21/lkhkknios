@@ -6,6 +6,7 @@ import {
   Alert,
   Image,
   Modal,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
 import {
   fetchPembimbingDates,
@@ -138,6 +140,7 @@ function parseDays(payload: unknown): Record<string, DayFill> {
 }
 
 export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
+  const insets = useSafeAreaInsets();
   const [nama, setNama] = useState("Memuat...");
   const [nip, setNip] = useState("");
   const [prodi, setProdi] = useState("");
@@ -317,7 +320,22 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      {/* SafeAreaView dari react-native hanya bekerja di iOS; di Android ia
+          View biasa tanpa inset, sehingga kartu teratas mepet ke jam dan
+          indikator jaringan. Inset ditambahkan ke KONTEN yang digulir saja,
+          bukan ke container, supaya lapisan penuh layar (mis. kamera) tetap
+          menutupi layar sampai ke tepi atas. */}
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          Platform.OS === "android" && {
+            paddingTop: insets.top + 16,
+            // Tab bar mengambang naik setinggi inset bawah - lihat catatan
+            // yang sama di LKHScreen.tsx.
+            paddingBottom: 120 + insets.bottom,
+          },
+        ]}
+      >
         <View style={styles.glassShadow}>
           <View style={styles.headerCard}>
             <View style={styles.avatar}>

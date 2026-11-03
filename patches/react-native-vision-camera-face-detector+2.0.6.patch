@@ -1,3 +1,39 @@
+diff --git a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/margelo/nitro/camera/facedetector/HybridImageFaceDetector.kt b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/margelo/nitro/camera/facedetector/HybridImageFaceDetector.kt
+index 5d116a9..cc29576 100644
+--- a/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/margelo/nitro/camera/facedetector/HybridImageFaceDetector.kt
++++ b/node_modules/react-native-vision-camera-face-detector/android/src/main/java/com/margelo/nitro/camera/facedetector/HybridImageFaceDetector.kt
+@@ -21,16 +21,24 @@ class HybridImageFaceDetector(
+     options.toMLFaceDetectorOptions()
+   )
+ 
++  // PATCH: `image` arrives as the Nitro variant `InputImage`, which nitrogen
++  // generates as a SEALED CLASS (First(String) | Second(Double) |
++  // Third(ImageUri)) - never a raw String or Map. The upstream version tested
++  // `is String` / `is Map<*, *>`, so every call fell through to the `else`
++  // branch and detectFaces() could never succeed on Android:
++  //   java.lang.IllegalArgumentException: Invalid image type. Expected string
++  //   or { uri }  (HybridImageFaceDetector.kt:33)
++  // Unwrap the variant instead. `Second` (a Double, i.e. a packager asset id)
++  // is still unsupported here because MLInputImage.fromFilePath() needs a URI.
+   private fun resolveInputImage(
+-    input: Any?
++    input: InputImage
+   ): String {
+     return when (input) {
+-      is String -> input
+-      is Map<*, *> -> {
+-        val uri = input["uri"] as? String
+-        uri ?: throw IllegalArgumentException("Invalid image object: missing 'uri'")
+-      }
+-      else -> throw IllegalArgumentException("Invalid image type. Expected string or { uri }")
++      is InputImage.First -> input.value
++      is InputImage.Third -> input.value.uri
++      is InputImage.Second -> throw IllegalArgumentException(
++        "Invalid image type. Expected a file path string or { uri }, got a number."
++      )
+     }
+   }
+ 
 diff --git a/node_modules/react-native-vision-camera-face-detector/ios/Extensions/ML+FaceDetectorOptions.swift b/node_modules/react-native-vision-camera-face-detector/ios/Extensions/ML+FaceDetectorOptions.swift
 index 518612a..f59cb46 100644
 --- a/node_modules/react-native-vision-camera-face-detector/ios/Extensions/ML+FaceDetectorOptions.swift

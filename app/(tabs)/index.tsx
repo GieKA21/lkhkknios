@@ -12,6 +12,8 @@ import {
   View,
 } from "react-native";
 
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import LKHScreen from "../../components/LKHScreen";
 import LoginScreen from "../../components/LoginScreen";
 import PembimbingScreen from "../../components/PembimbingScreen";
@@ -19,6 +21,19 @@ import ProfilDosenScreen from "../../components/ProfilDosenScreen";
 import ProfileScreen from "../../components/ProfileScreen";
 
 export default function Index() {
+  const insets = useSafeAreaInsets();
+  // Jarak tab bar mengambang ke tepi bawah layar.
+  //
+  // Di Android app.json menyalakan `edgeToEdgeEnabled`, jadi aplikasi
+  // menggambar SAMPAI ke bawah system bar - dan `SafeAreaView` dari
+  // react-native memang tidak berefek di Android. Dengan jarak tetap, tab bar
+  // tertimpa navigation bar. `insets.bottom` sudah mencerminkan mode navigasi
+  // yang dipakai pengguna: navigation bar tiga tombol melaporkan inset tebal,
+  // gesture navigation melaporkan inset tipis, jadi satu rumus ini melayani
+  // keduanya tanpa perlu mendeteksi modenya sendiri.
+  //
+  // iOS sengaja tidak diubah (tetap 14): di sana tampilannya sudah benar.
+  const tabBarBottom = Platform.OS === "android" ? insets.bottom + 10 : 14;
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [currentTab, setCurrentTab] = useState<"lkh" | "profile">("lkh");
@@ -88,7 +103,7 @@ export default function Index() {
       {/* Tab bar mengambang ala iOS: kartu putih membulat. Dulu BlurView
           (kaca), tapi di Android BlurView tidak meng-clip ke borderRadius -
           tab bar malah tampak KOTAK. View solid membulat lebih konsisten. */}
-      <View style={styles.tabBarWrap}>
+      <View style={[styles.tabBarWrap, { bottom: tabBarBottom }]}>
         <View style={styles.tabBar}>
           <TouchableOpacity
             style={styles.tabItem}
@@ -185,6 +200,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 28,
     right: 28,
+    // `bottom` ditimpa saat render dengan inset bawah (lihat tabBarBottom).
     bottom: 14,
     height: 62,
     borderRadius: 31,

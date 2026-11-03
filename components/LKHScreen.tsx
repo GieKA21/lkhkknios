@@ -17,8 +17,18 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
-import { CommonResolutions, useCameraDevice, useCameraPermission, usePhotoOutput } from "react-native-vision-camera";
-import { Camera as FaceDetectorCamera } from "react-native-vision-camera-face-detector";
+import { Camera, CommonResolutions, useCameraDevice, useCameraPermission, usePhotoOutput } from "react-native-vision-camera";
+// Sengaja TIDAK memakai <Camera> dari react-native-vision-camera-face-detector.
+// Pembungkus itu memanggil useFaceDetectorOutput(), yang di v2.0.6 memo-nya
+// rusak: `useMemo(..., [options])` sementara `options` adalah objek rest
+// (`...options`) yang SELALU dibuat baru tiap render, sehingga output detektor
+// tidak pernah stabil. VisionCamera membandingkan `outputs` per-elemen, jadi
+// output yang berganti identitas memicu session.configure() -> unbindAll() di
+// SETIAP render. Lihat catatan di faceDetectorOutput di bawah.
+// iOS TETAP memakai <FaceDetectorCamera> seperti semula - jalur itu sudah
+// teruji di iPhone dan sengaja TIDAK diubah. Jalur createFaceDetectorOutput()
+// di bawah hanya dipakai Android.
+import { Camera as FaceDetectorCamera, createFaceDetectorOutput } from "react-native-vision-camera-face-detector";
 import type { Face } from "react-native-vision-camera-face-detector";
 import {
     FACE_DETECTOR_OPTIONS,
@@ -27,6 +37,7 @@ import {
     MultipleFacesDetectedError,
     NoFaceDetectedError,
     PoorQualityFaceError,
+    warmUpFaceModel,
 } from "../utils/faceAuthNative";
 import {
     isEnrolled,
@@ -36,6 +47,7 @@ import { decideAttendance } from "../utils/verificationAgent";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
+import type { HasilPengikatan } from "../hooks/useLivenessChallenge";
 import { scheduleDailyAttendanceReminders } from "../utils/notifications";
 import {
     checkAttendanceLocation,
@@ -134,6 +146,57 @@ function initials(name: string): string {
 const FACE_TICK_MS = 110;
 
 /**
+ * Batas umur PENGIKATAN IDENTITAS (lihat hooks/useLivenessChallenge.ts).
+ *
+ * Identitas diperiksa di dalam tantangan keaktifan, lalu pengguna menekan
+ * shutter beberapa saat kemudian. Rentang di antara keduanya adalah jendela
+ * yang tersisa untuk menukar wajah, jadi dibatasi: lewat dari ini, tantangan
+ * harus diulang. 20 detik dipilih supaya pengguna sah yang sejenak ragu tidak
+ * ikut tertolak - jarak wajar antara "silakan ambil foto" dan tombol ditekan
+ * hanya beberapa detik.
+ */
+const PENGIKATAN_TTL_MS = 20_000;
+
+// ===========================================================================
+// SAKLAR UJI SEMENTARA - HARUS KEMBALI false SEBELUM BUILD APA PUN YANG
+// DIPAKAI MENGUJI AKURASI ATAU DILAPORKAN DI NASKAH.
+//
+// Dipasang 4 Oktober 2026 hanya untuk menguji jalur kamera di luar periode
+// KKN (periode angkatan berakhir 24 September 2026), setelah crash
+// "PreviewView.previewOutput: Cannot cast dynamic to a jsi::Value type"
+// diperbaiki lewat regenerasi proyek native.
+//
+// Yang dilewati HANYA gerbang tanggal. Gerbang lain - wajah terdaftar, izin
+// kamera, geofence, tantangan keaktifan, dan ambang kemiripan - tidak
+// disentuh sama sekali.
+// ===========================================================================
+/** Kompensasi pencahayaan kamera depan, dalam satuan EV (stop). Positif
+ *  berarti lebih terang; +1 EV kira-kira menggandakan kecerahan terukurnya.
+ *
+ *  Dipasang karena fps 15 saja belum cukup di ruangan redup: dilaporkan dari
+ *  iPhone bahwa preview sesekali anjlok sampai wajahnya tak terdeteksi, lalu
+ *  pulih - dan selama bingkai gelap itu perintah tolehan tergantikan
+ *  "Posisikan wajah dalam bingkai".
+ *
+ *  ANGKA INI SEBUAH TOMBOL PUTAR. Kalau di bawah cahaya terang wajahnya malah
+ *  menjadi pucat dan mutunya gagal, turunkan ke 0,5. Kalau ruangan redup masih
+ *  terlalu gelap, naikkan ke 1,5 - tetapi ubah SATU hal saja dalam satu kali
+ *  uji, supaya ketahuan mana yang menolong. */
+const KOMPENSASI_PENCAHAYAAN_EV = 1;
+
+/** Saklar uji: true melewati pemeriksaan periode KKN sepenuhnya, sehingga
+ *  absen dapat dicoba pada tanggal berapa pun.
+ *
+ *  HARUS false pada berkas yang diserahkan. Nilainya sempat true selama
+ *  pengembangan supaya alur absen bisa diuji di luar jadwal KKN; dikembalikan
+ *  ke false pada 10 Oktober 2026.
+ *
+ *  Mematikannya TIDAK memblokir siapa pun secara tak terduga: isWithinKKNPeriod
+ *  tetap fail-open bila server belum mengirim tanggal periodenya, jadi yang
+ *  terkunci hanyalah tanggal yang memang di luar periode menurut data server. */
+const ABAIKAN_PERIODE_KKN = false;
+
+/**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
  * New Architecture (Fabric), View ber-width/height persen + borderRadius besar
  * kadang dirender sebagai kotak-membulat, bukan lingkaran - itulah sebab hari
@@ -165,6 +228,12 @@ export default function LKHScreen() {
   const [token, setToken] = useState<string>("");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [records, setRecords] = useState<{ [key: string]: LKHRecord }>({});
+  // Catatan absen dimuat secara asinkron, dan sampai selesai records masih {}
+  // sehingga alreadyAttendedToday terbaca false. Berpindah cepat dari Profil
+  // ke LKH menangkap jendela itu: tombol absen sempat hidup walau hari ini
+  // SUDAH absen, dan bisa tertekan. Pola yang dipakai sama dengan
+  // isCheckingEnrollment: tombol terkunci sampai statusnya pasti.
+  const [isCheckingRecords, setIsCheckingRecords] = useState(true);
 
   // Periode KKN dihitung dari data server, bukan tanggal hardcode. Server
   // punya dua sumber: per lokasi/kecamatan (wilayahKec.setting - lebih
@@ -214,7 +283,8 @@ export default function LKHScreen() {
     [],
   );
   const photoOutput = usePhotoOutput(photoConfig);
-  const cameraOutputs = useMemo(() => [photoOutput], [photoOutput]);
+  // cameraOutputs dibentuk SETELAH handleCameraFaces (butuh output detektor
+  // wajah yang stabil) - lihat faceDetectorOutput di bawah.
   // PREVIEW GELAP: saat detektor wajah aktif, iOS membatasi exposure ke 1
   // durasi frame (1/30 dtk @30fps), jadi preview lebih gelap. 15fps
   // menggandakan batas exposure (2x lebih terang) & memangkas separuh callback
@@ -222,15 +292,104 @@ export default function LKHScreen() {
   // iOS SAJA. Di Android, memaksa fps mengharuskan VisionCamera menemukan
   // format yang mendukungnya persis; kalau tidak ada, sesi kamera gagal
   // dikonfigurasi dan preview tinggal HITAM. Biarkan Android memilih sendiri.
+  // setExposureBias MELEMPAR galat bila perangkatnya tidak mendukung bias
+  // atau nilainya di luar rentang, jadi keduanya diperiksa di sini. iOS saja:
+  // Android tidak mengalami gejalanya, dan mencerahkannya di sana hanya
+  // berisiko membuat wajah pucat tanpa menyelesaikan apa pun.
+  const biasPencahayaan = useMemo(() => {
+    if (Platform.OS !== "ios") return undefined;
+    if (!cameraDevice?.supportsExposureBias) return undefined;
+    return Math.min(KOMPENSASI_PENCAHAYAAN_EV, cameraDevice.maxExposureBias);
+  }, [cameraDevice]);
+
   const cameraConstraints = useMemo(
     () => (Platform.OS === "ios" ? [{ fps: 15 }] : undefined),
     [],
   );
   const faceQualityGate = useFaceQualityGate();
+
+  // Kapan identitas terakhir kali terikat ke tantangan keaktifan (epoch ms),
+  // null bila belum ada. Dibaca takeSelfie untuk menolak pengikatan yang sudah
+  // basi - lihat PENGIKATAN_TTL_MS.
+  const pengikatanAtRef = useRef<number | null>(null);
+
+  /**
+   * PENGIKATAN IDENTITAS - dipanggil hook liveness saat pengguna menghadap
+   * tengah sesudah kedua tolehan selesai.
+   *
+   * Mengambil satu foto diam-diam lalu memeriksa apakah wajah yang SEDANG
+   * mengerjakan tantangan benar-benar pemilik akun. Inilah yang menutup
+   * serangan "teman menoleh, lalu foto korban disodorkan saat menjepret":
+   * wajah teman gugur di sini dan tidak pernah membuka tombol shutter.
+   *
+   * Kegagalan MUTU dibedakan dari kegagalan IDENTITAS. Mata terpejam atau
+   * wajah blur hanya meminta pengguna menghadap tengah sekali lagi; yang
+   * mengulang tantangan dari awal hanyalah wajah yang memang bukan pemiliknya.
+   */
+  const handleBindIdentity = useCallback(async (): Promise<HasilPengikatan> => {
+    try {
+      // enableShutterSound: false - jepretan ini TIDAK diminta pengguna, ia
+      // bagian dalam dari tantangan keaktifan. Membunyikan rana di sini
+      // membuat satu kali absen terdengar memotret beberapa kali dan
+      // membingungkan. Bunyi rana tetap menyala pada foto absen yang
+      // sesungguhnya di takeSelfie, karena di sana memang ada umpan balik
+      // yang berguna. Catatan API: sebagian wilayah memaksa bunyi rana di
+      // tingkat sistem, jadi ini permintaan, bukan jaminan.
+      const photoFile = await photoOutput.capturePhotoToFile(
+        { enableShutterSound: false },
+        {},
+      );
+      const photoUri = `file://${photoFile.filePath}`;
+
+      let embedding: Float32Array;
+      try {
+        embedding = await getFaceEmbedding(photoUri);
+      } catch (error) {
+        // Semua galat pembacaan wajah diperlakukan sebagai soal mutu: pada
+        // titik ini pengguna sedang bergerak, jadi wajar sesekali meleset.
+        if (
+          error instanceof NoFaceDetectedError ||
+          error instanceof MultipleFacesDetectedError ||
+          error instanceof PoorQualityFaceError
+        ) {
+          return "ulangi";
+        }
+        throw error;
+      }
+
+      const verdict = await decideAttendance(embedding);
+      if (verdict.kind === "not-enrolled") {
+        // Set wajah hilang di tengah jalan (mis. di-reset dari Profil).
+        setIsCameraVisible(false);
+        setIsEnrollmentVisible(true);
+        return "gagal";
+      }
+      if (verdict.kind === "rejected") {
+        pengikatanAtRef.current = null;
+        Alert.alert(
+          "Wajah Tidak Cocok",
+          `Wajah yang mengerjakan tantangan tidak cocok dengan wajah terdaftar ` +
+            `pada akun ini (kemiripan ${(verdict.similarity * 100).toFixed(2)}%). ` +
+            `Absensi harus dikerjakan oleh pemilik akun.`,
+        );
+        return "gagal";
+      }
+
+      pengikatanAtRef.current = Date.now();
+      return "ok";
+    } catch (error) {
+      console.error("Gagal mengikat identitas pada tantangan keaktifan", error);
+      return "ulangi";
+    }
+    // photoOutput dimemo dengan deps [] (lihat photoConfig), jadi referensi
+    // callback ini stabil - penting, karena ia ikut menentukan stabilitas
+    // onFacesDetected dan karenanya konfigurasi sesi kamera.
+  }, [photoOutput]);
+
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
-  // tantangan gerak (menoleh dua sisi), sehingga foto/layar statis tidak bisa
-  // lolos - lihat hooks/useLivenessChallenge.ts.
-  const liveness = useLivenessChallenge();
+  // tantangan gerak (menoleh dua sisi) DAN identitasnya terbukti pemilik akun
+  // - lihat hooks/useLivenessChallenge.ts.
+  const liveness = useLivenessChallenge(handleBindIdentity);
   // Satu callback menyuapi frame ke quality gate DAN liveness (keduanya baca
   // yaw/bounds yang sama). onFacesDetected dipanggil per-frame di thread JS &
   // tiap hook memanggil setState; tanpa throttle, komponen ini dirender ulang
@@ -251,8 +410,92 @@ export default function LKHScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [faceQualityGate.onFacesDetected, liveness.onFacesDetected],
   );
+
+  // OUTPUT DETEKTOR WAJAH YANG STABIL - ini inti perbaikan "preview hitam" di
+  // Android.
+  //
+  // Gejalanya: preview hitam, foto gagal dengan
+  //   ImageCaptureException: Camera is closed
+  //     ... ProcessCameraProvider.unbindAll(...)
+  //     ... HybridCameraSession$configure$1.invokeSuspend
+  // padahal deteksi wajah & tantangan keaktifan tetap berjalan.
+  //
+  // Sebabnya BUKAN pengambilan fotonya, melainkan sesi kamera yang
+  // dikonfigurasi ULANG terus-menerus: VisionCamera membandingkan `outputs`
+  // per-elemen (useMemoizedArray), dan useFaceDetectorOutput() v2.0.6
+  // mengembalikan output baru di SETIAP render karena dependensi memo-nya
+  // adalah objek rest yang selalu baru. Tiap render -> configure() ->
+  // unbindAll() -> preview dirobohkan & permintaan jepret dibatalkan. Karena
+  // panduan di layar meng-setState ~9x/detik (FACE_TICK_MS), sesi praktis
+  // tidak pernah sempat hidup. Analisis frame tetap jalan, itu sebabnya
+  // deteksi wajah terlihat normal dan onError kamera tak pernah menyala.
+  //
+  // Maka output dibuat SEKALI di sini (deps []) memakai API publik
+  // createFaceDetectorOutput(), dengan callback dialirkan lewat ref supaya
+  // identitas outputnya tidak pernah berubah meski komponen render ulang.
+  const facesCallbackRef = useRef(handleCameraFaces);
+  facesCallbackRef.current = handleCameraFaces;
+  const cameraErrorRef = useRef(faceQualityGate.onFaceDetectionError);
+  cameraErrorRef.current = faceQualityGate.onFaceDetectionError;
+  // ANDROID SAJA. Di iOS output detektor tetap dibuat oleh
+  // <FaceDetectorCamera> seperti semula (null di sini = jalur iOS tak berubah).
+  const faceDetectorOutput = useMemo(
+    () =>
+      Platform.OS !== "android"
+        ? null
+        : createFaceDetectorOutput({
+        onFacesDetected: (faces) => facesCallbackRef.current(faces),
+        onError: (error) => cameraErrorRef.current(error),
+        performanceMode: "fast",
+        // DIAGNOSTIK (dipertahankan dari sebelumnya): landmark &
+        // classification live dimatikan untuk menghindari crash SIGSEGV MLKit
+        // di iOS 26. TIDAK memengaruhi pipeline foto still di
+        // utils/faceAuthNative.ts, yang tetap memakai FACE_DETECTOR_OPTIONS
+        // lengkap saat enroll/verify.
+        runLandmarks: false,
+        runClassifications: false,
+        minFaceSize: FACE_DETECTOR_OPTIONS.minFaceSize,
+      }),
+    [],
+  );
+  // Di Android outputs = [detektor wajah stabil, foto]; di iOS tetap hanya
+  // [foto], karena <FaceDetectorCamera> menyisipkan output detektornya sendiri
+  // persis seperti sebelumnya.
+  const cameraOutputs = useMemo(
+    () =>
+      faceDetectorOutput ? [faceDetectorOutput, photoOutput] : [photoOutput],
+    [faceDetectorOutput, photoOutput],
+  );
+
   const insets = useSafeAreaInsets();
   const [isCameraVisible, setIsCameraVisible] = useState(false);
+
+  // ANDROID SAJA - "preview hitam yang sebenarnya hidup".
+  // Gambarnya sudah mengalir (deteksi wajah jalan, foto hasil jepretan benar),
+  // tetapi permukaan preview tidak pernah digambar ke layar sampai ada sesuatu
+  // yang memaksa jendela menggambar ulang - terbukti karena preview baru
+  // muncul begitu dialog error tampil di atasnya. Maka setelah aliran preview
+  // benar-benar mulai (onPreviewStarted), tinggi view digeser 1px agar terjadi
+  // satu layout pass sehingga permukaannya ikut tergambar. Timer 600ms adalah
+  // jaring pengaman bila onPreviewStarted tidak menyala.
+  const [previewStarted, setPreviewStarted] = useState(false);
+  // Mode render preview Android. Tombol pengubahnya dilepas bersama lapisan
+  // diagnostik, tetapi nilainya tetap dibaca prop implementationMode -
+  // dibiarkan sebagai state supaya mudah dinyalakan lagi bila suatu saat
+  // ada perangkat yang menuntut TextureView.
+  const [useTextureView] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (!isCameraVisible) {
+      setPreviewStarted(false);
+      return;
+    }
+    // TIDAK ADA timer cadangan di sini. Versi sebelumnya menyalakan penanda
+    // setelah 600 ms tanpa peduli apakah onPreviewStarted benar-benar menyala,
+    // sehingga penanda selalu menulis "mulai" dan menyembunyikan fakta bahwa
+    // aliran preview tidak pernah berjalan. Diagnostik yang berbohong lebih
+    // buruk daripada tidak ada diagnostik.
+  }, [isCameraVisible]);
   // Enrollment terpisah (FaceEnrollmentModal) - terbuka saat user mencoba
   // absen tanpa punya set wajah terdaftar. Menggantikan jalur lama di mana
   // foto absen pertama diam-diam menjadi wajah patokan.
@@ -282,9 +525,16 @@ export default function LKHScreen() {
   // terpotong?) tanpa perlu Console.app. Hapus setelah root cause ketemu.
   const [debugPhotoUri, setDebugPhotoUri] = useState<string | null>(null);
   const [isCheckingLocation, setIsCheckingLocation] = useState(false);
-  // True kalau foto profil gagal dimuat (URL 404 / jaringan) - render jatuh
+  // URI foto profil yang TERBUKTI gagal dimuat (404 / jaringan) - render jatuh
   // ke avatar inisial alih-alih lingkaran kosong.
-  const [photoFailed, setPhotoFailed] = useState(false);
+  //
+  // Sengaja menyimpan URI-nya, bukan boolean. Layar ini di-mount ULANG setiap
+  // pindah tab (app/(tabs)/index.tsx merender bersyarat, bukan memakai
+  // navigator), dan fotoUrl berganti dari URL remote ke berkas lokal di tengah
+  // jalan. Dengan boolean, onError milik URL LAMA yang datang terlambat ikut
+  // mematikan URI BARU yang sebenarnya sehat, dan karena efeknya cuma jalan
+  // saat mount tidak ada yang meresetnya - avatar terkunci jadi inisial.
+  const [failedPhotoUri, setFailedPhotoUri] = useState<string | null>(null);
   // Guard agar sinkron-otomatis (pengganti tombol manual) hanya dicoba sekali
   // per sesi layar, bukan tiap render / saat sebagian gagal.
   const autoSyncTriedRef = useRef(false);
@@ -294,11 +544,23 @@ export default function LKHScreen() {
   // dan referensinya berubah tiap render, jadi menurutinya malah membuat
   // efek ini jalan berulang.
   useEffect(() => {
+    // Cache lokal dibaca lebih dulu (tanpa jaringan) supaya status "sudah
+    // absen" diketahui hampir seketika; tarikan server di bawah menyusul dan
+    // menimpanya kalau berbeda.
+    AsyncStorage.getItem("@lkh_records")
+      .then((stored) => {
+        if (!stored) return;
+        setRecords(JSON.parse(stored));
+        setIsCheckingRecords(false);
+      })
+      .catch(() => {});
     loadUserProfile().then(() => {
       // Bersihkan dulu catatan bekas Mode Demo (fitur demo kini dihapus total)
       // SEBELUM menarik dari server, supaya tanggal yang cuma "demo" tidak lagi
       // tampil ungu dan mengikuti status server apa adanya (mis. merah).
-      purgeDemoRecords().finally(() => fetchServerLKH());
+      purgeDemoRecords().finally(() =>
+        fetchServerLKH().finally(() => setIsCheckingRecords(false)),
+      );
     });
     // Wajah terdaftar kini tinggal di server (lihat utils/faceEnrollment.ts).
     // Selaraskan dulu supaya instalasi baru / perangkat baru langsung
@@ -324,12 +586,27 @@ export default function LKHScreen() {
   }, []);
 
   // Jadwalkan ulang notifikasi pengingat absen (10:00 & 20:00) setiap kali
-  // data laporan berubah - otomatis dibatalkan begitu hari ini sudah absen.
+  // data laporan berubah - otomatis dibatalkan begitu hari ini sudah absen,
+  // ATAU begitu periode KKN lewat.
+  //
+  // kknPeriod ikut jadi dependensi, bukan hanya records: periodenya datang
+  // dari profil server dan bisa terisi SESUDAH render pertama. Tanpa itu,
+  // penjadwalan pertama memakai periode kosong - yang dianggap fail-open -
+  // dan pengingatnya terlanjur terpasang untuk hari itu.
   useEffect(() => {
-    scheduleDailyAttendanceReminders(!!records[toDateKey(new Date())]).catch(
-      () => {},
-    );
-  }, [records]);
+    scheduleDailyAttendanceReminders(
+      !!records[toDateKey(new Date())],
+      isWithinKKNPeriod(new Date()),
+    ).catch(() => {});
+    // isWithinKKNPeriod SENGAJA tidak masuk daftar dependensi. Ia dideklarasikan
+    // jauh di bawah efek ini sebagai `const`, sedangkan daftar dependensi
+    // dievaluasi saat render pada baris ini juga - menyebutkannya di situ
+    // melempar "Cannot access before initialization" dan aplikasinya mati saat
+    // dibuka. Memanggilnya di DALAM badan efek aman, karena badan efek baru
+    // berjalan sesudah seluruh komponen selesai dirender. Satu-satunya yang
+    // dibacanya dan bisa berubah adalah kknPeriod, dan itu sudah didaftarkan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records, kknPeriod]);
 
   // Sinkron OTOMATIS senyap: begitu ada laporan offline yang belum terkirim,
   // coba kirim sekali di latar (tanpa modal/alert), di samping tombol manual.
@@ -359,13 +636,21 @@ export default function LKHScreen() {
         // 404 lalu lingkaran kosong. Tanpa foto, fotoUrl dikosongkan dan
         // render menampilkan avatar inisial.
         const dbFotoUrl = data.foto ? profilePhotoUrl(data.foto) : "";
-        setPhotoFailed(false);
+        setFailedPhotoUri(null);
+
+        // Di iOS fotoUrl SENGAJA dikosongkan dulu, bukan diisi URL remote.
+        // Tarikan remote di iOS hampir selalu ditolak (endpoint di balik WAF +
+        // butuh token), dan onError-nya datang setelah berkas lokal terpasang
+        // - itu akar bug "foto hilang setelah pindah tab". Berkas lokal hasil
+        // cache dipasang di bawah; kalau cache gagal, barulah URL remote
+        // dipakai sebagai cadangan.
+        const fotoAwal = Platform.OS === "ios" ? "" : dbFotoUrl;
 
         setUserData({
           nama: data.nama,
           nim: data.nim,
           prodi: data.prodi,
-          fotoUrl: dbFotoUrl,
+          fotoUrl: fotoAwal,
           kecamatan: data.kecamatan || null,
           kabupaten: data.kabupaten || null,
           poskoKoordinat: data.poskoKoordinat || null,
@@ -383,10 +668,10 @@ export default function LKHScreen() {
         // diubah. Kalau unduh gagal, URL remote (di atas) jadi fallback.
         if (Platform.OS === "ios" && dbFotoUrl && savedToken) {
           getCachedProfilePhoto(dbFotoUrl, savedToken).then((localUri) => {
-            if (localUri) {
-              setPhotoFailed(false);
-              setUserData((prev) => ({ ...prev, fotoUrl: localUri }));
-            }
+            // Cache gagal -> jatuh ke URL remote, biar tetap ada peluang tampil.
+            const uri = localUri || dbFotoUrl;
+            setFailedPhotoUri(null);
+            setUserData((prev) => ({ ...prev, fotoUrl: uri }));
           });
         }
       }
@@ -511,6 +796,8 @@ export default function LKHScreen() {
   };
 
   const isWithinKKNPeriod = (date: Date) => {
+    // SAKLAR UJI - lihat ABAIKAN_PERIODE_KKN di dekat awal berkas.
+    if (ABAIKAN_PERIODE_KKN) return true;
     // Fail-open kalau server belum punya tanggal periode sama sekali (lihat
     // kknPeriod di atas) - jangan blokir absen gara-gara data admin belum
     // lengkap.
@@ -562,6 +849,16 @@ export default function LKHScreen() {
 
   const handleOpenAttendanceCamera = async () => {
     const today = new Date();
+
+    // Penjagaan kedua, bukan pengganti tombol yang terkunci. Keadaan tombol
+    // dihitung saat render; kalau catatan hari ini baru tiba sesudah jari
+    // menyentuh layar, tekanan itu sudah telanjur diteruskan. Pemeriksaan di
+    // sini berjalan pada nilai terbaru, jadi menutup sisa celahnya.
+    if (isCheckingRecords) return;
+    if (alreadyAttendedToday) {
+      Alert.alert("Sudah Absen", "Presensi hari ini sudah tercatat.");
+      return;
+    }
 
     if (!isWithinKKNPeriod(today)) {
       Alert.alert("Perhatian", "Hari ini bukan dalam periode aktif KKN.");
@@ -628,8 +925,17 @@ export default function LKHScreen() {
       setIsCheckingLocation(false);
     }
 
+    // Muat model lebih awal, jangan ditunggu. Pemeriksaan identitas di dalam
+    // tantangan adalah pemakaian PERTAMA model pada sesi ini, dan memuat
+    // berkas 5 MB beserta interpreternya memakan beberapa detik - tanpa ini
+    // jeda tersebut jatuh di tengah tantangan dan terbaca sebagai aplikasi
+    // menggantung. Pengguna masih harus menoleh dua kali sebelum pemeriksaan
+    // berjalan, jadi waktunya cukup untuk selesai di latar.
+    warmUpFaceModel();
+
     // Setiap sesi absen memulai tantangan keaktifan dari nol - membuktikan
     // wajah hidup yang hadir sekarang, bukan sekali seumur pemasangan.
+    pengikatanAtRef.current = null;
     liveness.reset();
     setIsCameraVisible(true);
   };
@@ -659,6 +965,29 @@ export default function LKHScreen() {
   };
 
   const takeSelfie = async () => {
+    // Identitas sudah diperiksa DI DALAM tantangan keaktifan (lihat
+    // handleBindIdentity). Yang diperiksa di sini hanyalah umurnya: makin
+    // lama jarak antara pemeriksaan itu dan shutter ditekan, makin lebar
+    // jendela untuk menukar wajah di antaranya.
+    // liveness.passed diperiksa ulang di sini, tidak hanya lewat
+    // captureDisabled: penjaga kesinambungan dapat membatalkan kelulusan
+    // kapan saja, dan jalur ini terlalu penting untuk bergantung pada satu
+    // penjagaan di lapisan tampilan saja.
+    const terikatPada = pengikatanAtRef.current;
+    if (
+      !liveness.passed ||
+      terikatPada === null ||
+      Date.now() - terikatPada > PENGIKATAN_TTL_MS
+    ) {
+      pengikatanAtRef.current = null;
+      liveness.reset();
+      Alert.alert(
+        "Ulangi Deteksi Aktif",
+        "Terlalu lama sejak wajah Anda diperiksa. Silakan ulangi tantangan gerak lalu ambil foto.",
+      );
+      return;
+    }
+
     setIsProcessingFace(true);
     try {
       const photoFile = await photoOutput.capturePhotoToFile({}, {});
@@ -721,7 +1050,15 @@ export default function LKHScreen() {
       );
     } catch (error) {
       console.error("Gagal mengambil foto selfie", error);
-      Alert.alert("Error", "Gagal mengambil foto selfie.");
+      // ANDROID SAJA: pesan asli ikut ditampilkan, karena logcat tidak selalu
+      // bisa diambil dari HP pengguna dan tanpa ini kegagalan kamera hanya
+      // terlihat sebagai "Gagal mengambil foto selfie" tanpa petunjuk apa pun.
+      // Di iOS teksnya sengaja dibiarkan persis seperti semula.
+      const detail =
+        Platform.OS === "android" && error instanceof Error
+          ? `\n\n${error.name}: ${error.message}`
+          : "";
+      Alert.alert("Error", `Gagal mengambil foto selfie.${detail}`);
     } finally {
       setIsProcessingFace(false);
     }
@@ -929,7 +1266,11 @@ export default function LKHScreen() {
 
   // Shutter absen terkunci sampai tantangan keaktifan lolos (selain saat
   // sedang memproses). Tanpa ini foto/layar statis bisa langsung dijepret.
-  const captureDisabled = isProcessingFace || !liveness.passed;
+  // liveness.isBinding ikut mengunci shutter: selama identitas sedang
+  // diperiksa, kamera sedang dipakai mengambil foto pengikatan, jadi
+  // menjepret bersamaan akan bertabrakan dengan permintaan itu.
+  const captureDisabled =
+    isProcessingFace || liveness.isBinding || !liveness.passed;
 
   // Sudah absen hari ini? Cukup ADA catatan absen untuk tanggal ini dengan
   // status apa pun (synced/unsynced) - TIDAK lagi bergantung pada foto lokal.
@@ -946,12 +1287,262 @@ export default function LKHScreen() {
     hasEnrollment &&
     (todayRecord?.status === "synced" || todayRecord?.status === "unsynced");
 
+  // Isi layar kamera absen, dipakai dua kali: sebagai lapisan biasa di
+  // Android dan sebagai isi <Modal> di iOS (lihat komentar di bawah).
+  // View polos + inset eksplisit, bukan SafeAreaView - alasan lengkap ada di
+  // komentar header FaceEnrollmentModal. Singkatnya: tombol close yang duduk
+  // di dalam area status bar / Dynamic Island tidak menerima sentuhan.
+  const cameraSurface = (
+        <View style={styles.cameraContainer}>
+          {cameraDevice && (
+            Platform.OS === "android" ? (
+              // ===== ANDROID =====
+              <Camera
+                // Tinggi digeser 1px sampai preview mulai, lalu dikembalikan -
+                // memaksa satu layout pass agar permukaan preview tergambar.
+                style={[styles.camera, { bottom: previewStarted ? 0 : 1 }]}
+                device={cameraDevice}
+                isActive={isCameraVisible}
+                // Elemen array ini WAJIB stabil: VisionCamera membandingkan
+                // outputs per-elemen, dan elemen yang berganti identitas
+                // memicu configure() -> unbindAll(). Lihat faceDetectorOutput.
+                outputs={cameraOutputs}
+                // implementationMode SENGAJA tidak diisi -> PreviewView memakai
+                // mode bawaannya. Sebelumnya di sini ada "compatible"
+                // (TextureView) sebagai penangkal masalah <Modal>; modalnya
+                // kini sudah dihapus, dan setter implementationMode di
+                // HybridPreviewView memanggil connectPreviewOutput() TANPA
+                // memutus koneksi lama, sehingga menyetelnya justru berisiko
+                // menyambungkan output preview dua kali - preview tetap
+                // melaporkan "mulai" tetapi tidak pernah menggambar.
+                implementationMode={useTextureView ? "compatible" : undefined}
+                onPreviewStarted={() => setPreviewStarted(true)}
+                onError={faceQualityGate.onFaceDetectionError}
+              />
+            ) : (
+              // ===== jalur iOS =====
+              // Larangan menyentuh jalur ini DICABUT 9 Oktober 2026 atas
+              // permintaan pengguna. Yang tetap berlaku: penanganan preview
+              // hitam dan sesi kamera yang dikonfigurasi ulang adalah
+              // perbaikan khusus ANDROID dan sengaja tidak dibawa ke sini -
+              // gejalanya tidak pernah muncul di iPhone, jadi menerapkannya
+              // hanya menambah risiko tanpa menyelesaikan apa pun.
+              //
+              // Setiap perubahan di blok ini hanya dapat dibuktikan lewat
+              // build GitHub Actions; tidak ada Mac untuk mengujinya di sini.
+              <FaceDetectorCamera
+                style={styles.camera}
+                device={cameraDevice}
+                isActive={isCameraVisible}
+                outputs={cameraOutputs}
+                constraints={cameraConstraints}
+                exposure={biasPencahayaan}
+                enableLowLightBoost
+                onFacesDetected={handleCameraFaces}
+                onError={faceQualityGate.onFaceDetectionError}
+                performanceMode="fast"
+                // DIAGNOSTIK: landmark & classification live dimatikan untuk
+                // menghindari crash SIGSEGV MLKit di iOS 26. TIDAK memengaruhi
+                // pipeline foto still (utils/faceAuthNative.ts) yang tetap
+                // memakai FACE_DETECTOR_OPTIONS lengkap saat enroll/verify.
+                runLandmarks={false}
+                runClassifications={false}
+                minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
+              />
+            )
+          )}
+          {/* DIAGNOSTIK ANDROID DILEPAS 7 Oktober 2026.
+              Dulu di sini ada penanda nomor build beserta keadaan preview, dan
+              tombol pengubah mode permukaan - keduanya dipasang saat memburu
+              bug "preview hitam" di Android, dan komentarnya sendiri menyebut
+              akan dilepas begitu preview beres. Preview sudah terbukti jalan
+              pada pengujian perangkat, jadi keduanya dihapus agar layar
+              presensi bersih.
+
+              previewStarted TETAP dipakai: nilainya menggeser tinggi preview
+              satu piksel untuk memaksa satu kali layout pass - lihat prop
+              style pada <Camera> Android di atas. useTextureView juga tetap
+              ada sebagai saklar di kode, hanya tombolnya yang dilepas. */}
+          <View
+            style={[
+              styles.cameraControls,
+              { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
+            ]}
+            pointerEvents="box-none"
+          >
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => {
+                // Bersihkan overlay foto debug juga - kalau tidak, foto lama
+                // ini akan nongol lagi menutupi kamera di sesi absen berikutnya
+                // (debugPhotoUri masih ke-set dari kegagalan sebelumnya).
+                setDebugPhotoUri(null);
+                setIsCameraVisible(false);
+              }}
+            >
+              <BlurView intensity={50} tint="dark" style={styles.closeBtnBlur}>
+                <Ionicons name="close" size={24} color="#FFF" />
+              </BlurView>
+            </TouchableOpacity>
+
+            {/* Penutup saat identitas diperiksa.
+                Jepretan pengikatan menghentikan aliran preview sesaat, dan
+                jeda itu tampak sebagai kedipan hitam di tengah tantangan -
+                terlihat seperti aplikasi tersendat padahal sedang bekerja.
+                Lapisan ini menutupinya dengan keterangan yang jujur tentang
+                apa yang sedang berlangsung.
+
+                Sengaja hanya lapisan tampilan: tidak ada prop <Camera> yang
+                disentuh, sehingga sesi kamera tidak dikonfigurasi ulang
+                (penyebab preview hitam yang sebenarnya - lihat catatan di
+                faceDetectorOutput). */}
+            {liveness.isBinding && (
+              <View style={styles.bindingOverlay} pointerEvents="none">
+                <BlurView intensity={40} tint="dark" style={styles.bindingBox}>
+                  <ActivityIndicator size="large" color="#FFF" />
+                  <Text style={styles.bindingText}>Memeriksa identitas</Text>
+                </BlurView>
+              </View>
+            )}
+
+            <View style={styles.cameraBottomArea}>
+              {/* Kemajuan tantangan sebagai strip, bukan "(langkah 2/5)" yang
+                  menempel di ujung kalimat - angka di dalam kalimat panjang
+                  terlewat begitu saja sambil menoleh. Jumlah stripnya berbeda
+                  tiap sesi karena rencananya diundi. */}
+              {!liveness.passed && (
+                <View style={styles.langkahBaris}>
+                  {Array.from({ length: liveness.total }, (_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.langkahStrip,
+                        i < liveness.step && styles.langkahStripAktif,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
+
+              {/* Kartu instruksi: baris utama besar, keterangan kecil di
+                  bawahnya, dan garis warna di kiri yang menandai nadanya.
+                  Peringatan ditahan 2 detik di dalam hook - tanpa itu pesannya
+                  ditimpa bingkai kamera berikutnya dan hanya tampak berkedip. */}
+              <BlurView
+                intensity={50}
+                tint="dark"
+                style={[
+                  styles.kartuInstruksi,
+                  liveness.nada === "peringatan" && styles.kartuPeringatan,
+                  liveness.nada === "lolos" && styles.kartuLolos,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.kartuGaris,
+                    liveness.nada === "peringatan" && styles.kartuGarisPeringatan,
+                    liveness.nada === "lolos" && styles.kartuGarisLolos,
+                  ]}
+                />
+                <View style={styles.kartuIsi}>
+                  <Text
+                    style={[
+                      styles.kartuJudul,
+                      liveness.nada === "peringatan" && styles.kartuJudulPeringatan,
+                      liveness.nada === "lolos" && styles.kartuJudulLolos,
+                    ]}
+                  >
+                    {liveness.instruction}
+                  </Text>
+                  <Text style={styles.kartuSub}>
+                    {liveness.passed ? faceQualityGate.message : liveness.sub}
+                  </Text>
+                </View>
+              </BlurView>
+
+              <TouchableOpacity
+                style={[
+                  styles.captureBtn,
+                  captureDisabled && styles.captureBtnDisabled,
+                ]}
+                onPress={takeSelfie}
+                disabled={captureDisabled}
+              >
+                <View
+                  style={[
+                    styles.captureInner,
+                    captureDisabled && styles.captureInnerDisabled,
+                  ]}
+                />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {isProcessingFace && (
+            <View style={styles.faceProcessingOverlay}>
+              <ActivityIndicator size="large" color="#FFF" />
+              <Text style={styles.faceProcessingText}>
+                Memverifikasi wajah...
+              </Text>
+            </View>
+          )}
+
+          {/* DIAGNOSTIK SEMENTARA: lihat komentar di deklarasi debugPhotoUri.
+              Dirender sebagai overlay di DALAM Modal kamera ini (bukan
+              <Modal> terpisah) - dua <Modal> RN yang sama-sama visible di
+              iOS tidak reliable (modal kedua bisa gagal tampil secara diam-
+              diam), dan modal kamera ini sengaja tetap terbuka saat deteksi
+              gagal supaya pengguna bisa langsung coba lagi. */}
+          {!!debugPhotoUri && (
+            <View
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: "#000",
+              }}
+            >
+              <Image
+                source={{ uri: debugPhotoUri }}
+                style={{ flex: 1 }}
+                resizeMode="contain"
+              />
+              <TouchableOpacity
+                style={{ padding: 16, alignItems: "center" }}
+                onPress={() => setDebugPhotoUri(null)}
+              >
+                <Text style={{ color: "#FFF", fontSize: 16 }}>Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      {/* SafeAreaView dari react-native hanya bekerja di iOS; di Android ia
+          View biasa tanpa inset, sehingga kartu teratas mepet ke jam dan
+          indikator jaringan. Inset ditambahkan ke KONTEN yang digulir saja,
+          bukan ke container, supaya lapisan penuh layar (mis. kamera) tetap
+          menutupi layar sampai ke tepi atas. */}
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          Platform.OS === "android" && {
+            paddingTop: insets.top + 16,
+            // Tab bar mengambang ikut naik setinggi inset bawah (lihat
+            // tabBarBottom di app/(tabs)/index.tsx), jadi ruang bawah konten
+            // harus naik sebanyak itu juga - kalau tidak, legenda dan tombol
+            // sinkron justru tertutup tab bar yang baru.
+            paddingBottom: 110 + insets.bottom,
+          },
+        ]}
+      >
         <View style={styles.glassShadow}>
           <View style={styles.profileCard}>
-            {userData.fotoUrl && !photoFailed ? (
+            {userData.fotoUrl && failedPhotoUri !== userData.fotoUrl ? (
               <Image
                 source={{
                   uri: userData.fotoUrl,
@@ -963,7 +1554,9 @@ export default function LKHScreen() {
                     : {}),
                 }}
                 style={styles.profileImage}
-                onError={() => setPhotoFailed(true)}
+                // Catat URI-nya, bukan sekadar "gagal": galat milik URI lama
+                // tidak boleh mematikan URI baru (lihat failedPhotoUri).
+                onError={() => setFailedPhotoUri(userData.fotoUrl)}
               />
             ) : (
               <View style={[styles.profileImage, styles.profileAvatarFallback]}>
@@ -1029,16 +1622,20 @@ export default function LKHScreen() {
                 styles.attendanceButton,
                 (isCheckingLocation ||
                   isCheckingEnrollment ||
+                  isCheckingRecords ||
                   alreadyAttendedToday) &&
                   styles.attendanceButtonDisabled,
               ]}
               onPress={handleOpenAttendanceCamera}
               activeOpacity={0.85}
               disabled={
-                isCheckingLocation || isCheckingEnrollment || alreadyAttendedToday
+                isCheckingLocation ||
+                isCheckingEnrollment ||
+                isCheckingRecords ||
+                alreadyAttendedToday
               }
             >
-              {isCheckingLocation || isCheckingEnrollment ? (
+              {isCheckingLocation || isCheckingEnrollment || isCheckingRecords ? (
                 <ActivityIndicator size="small" color="#FFF" />
               ) : (
                 <FontAwesome5
@@ -1052,6 +1649,8 @@ export default function LKHScreen() {
                   ? "Memeriksa lokasi..."
                   : isCheckingEnrollment
                     ? "Memeriksa data wajah..."
+                    : isCheckingRecords
+                      ? "Memeriksa catatan hari ini..."
                     : alreadyAttendedToday
                       ? "Sudah Absen Hari Ini"
                       : hasEnrollment
@@ -1096,6 +1695,10 @@ export default function LKHScreen() {
       {/* Tombol sinkron MELAYANG (FAB) di pojok kanan bawah - ikon saja, seperti
           build 30. Sengaja SIBLING dari ScrollView (bukan di dalamnya) supaya
           menempel di layar & tidak ikut ter-scroll. */}
+      {/* Disembunyikan selama kamera terbuka: elevation-nya bisa menggambar di
+          atas lapisan kamera sekarang setelah lapisan itu tidak lagi memakai
+          elevation. */}
+      {!isCameraVisible && (
       <TouchableOpacity
         style={styles.fabButton}
         onPress={confirmSync}
@@ -1104,6 +1707,7 @@ export default function LKHScreen() {
       >
         <FontAwesome5 name="sync-alt" size={18} color="#FFF" />
       </TouchableOpacity>
+      )}
 
       <Modal transparent visible={isSyncing} animationType="fade">
         <View style={styles.modalLoadingOverlay}>
@@ -1114,135 +1718,24 @@ export default function LKHScreen() {
         </View>
       </Modal>
 
-      <Modal visible={isCameraVisible} animationType="slide">
-        {/* View polos + inset eksplisit, bukan SafeAreaView - alasan lengkap
-            ada di komentar header FaceEnrollmentModal. Singkatnya: tombol
-            close yang duduk di dalam area status bar / Dynamic Island tidak
-            menerima sentuhan. */}
-        <View style={styles.cameraContainer}>
-          {cameraDevice && (
-            <FaceDetectorCamera
-              style={styles.camera}
-              device={cameraDevice}
-              isActive={isCameraVisible}
-              outputs={cameraOutputs}
-              constraints={cameraConstraints}
-              // iOS SAJA - ini fitur AVCaptureDevice. Di Android, meminta
-              // low-light boost pada perangkat yang tidak mendukungnya membuat
-              // sesi kamera gagal dikonfigurasi -> preview HITAM.
-              enableLowLightBoost={Platform.OS === "ios"}
-              onFacesDetected={handleCameraFaces}
-              onError={faceQualityGate.onFaceDetectionError}
-              performanceMode="fast"
-              // DIAGNOSTIK: dipaksa false (bukan pakai
-              // FACE_DETECTOR_OPTIONS.runLandmarks/runClassifications) untuk
-              // isolasi apakah crash SIGSEGV saat kamera dibuka (lihat crash
-              // log: EXC_BAD_ACCESS di thread JS Hermes, dipicu callback
-              // onFacesDetected) berasal dari beban MLKit landmarks/
-              // classifications di live preview - library ini sendiri
-              // mengaku MLKit-iOS belum sepenuhnya kompatibel dengan iOS 26.
-              // TIDAK memengaruhi pipeline foto still (utils/faceAuthNative.ts,
-              // dipakai saat enroll/verify sungguhan) yang tetap pakai
-              // FACE_DETECTOR_OPTIONS asli (landmarks+classifications ON).
-              // Kalau setelah ini kamera masih crash, kemungkinan besar
-              // masalahnya bukan di sini - live face detector-nya sendiri
-              // yang perlu dimatikan total (bukan cuma landmarks/
-              // classifications-nya).
-              runLandmarks={false}
-              runClassifications={false}
-              minFaceSize={FACE_DETECTOR_OPTIONS.minFaceSize}
-            />
-          )}
-          <View
-            style={[
-              styles.cameraControls,
-              { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 20 },
-            ]}
-            pointerEvents="box-none"
-          >
-            <TouchableOpacity
-              style={styles.closeBtn}
-              onPress={() => {
-                // Bersihkan overlay foto debug juga - kalau tidak, foto lama
-                // ini akan nongol lagi menutupi kamera di sesi absen berikutnya
-                // (debugPhotoUri masih ke-set dari kegagalan sebelumnya).
-                setDebugPhotoUri(null);
-                setIsCameraVisible(false);
-              }}
-            >
-              <BlurView intensity={50} tint="dark" style={styles.closeBtnBlur}>
-                <Ionicons name="close" size={24} color="#FFF" />
-              </BlurView>
-            </TouchableOpacity>
-
-            <View style={styles.cameraBottomArea}>
-              <BlurView intensity={50} tint="dark" style={styles.liveStatusPill}>
-                <Text style={styles.liveStatusText}>
-                  {liveness.passed
-                    ? `${faceQualityGate.message} (akan diverifikasi setelah jepret)`
-                    : `${liveness.instruction} (langkah ${liveness.step}/${liveness.total})`}
-                </Text>
-              </BlurView>
-
-              <TouchableOpacity
-                style={[
-                  styles.captureBtn,
-                  captureDisabled && styles.captureBtnDisabled,
-                ]}
-                onPress={takeSelfie}
-                disabled={captureDisabled}
-              >
-                <View
-                  style={[
-                    styles.captureInner,
-                    captureDisabled && styles.captureInnerDisabled,
-                  ]}
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {isProcessingFace && (
-            <View style={styles.faceProcessingOverlay}>
-              <ActivityIndicator size="large" color="#FFF" />
-              <Text style={styles.faceProcessingText}>
-                Memverifikasi wajah...
-              </Text>
-            </View>
-          )}
-
-          {/* DIAGNOSTIK SEMENTARA: lihat komentar di deklarasi debugPhotoUri.
-              Dirender sebagai overlay di DALAM Modal kamera ini (bukan
-              <Modal> terpisah) - dua <Modal> RN yang sama-sama visible di
-              iOS tidak reliable (modal kedua bisa gagal tampil secara diam-
-              diam), dan modal kamera ini sengaja tetap terbuka saat deteksi
-              gagal supaya pengguna bisa langsung coba lagi. */}
-          {!!debugPhotoUri && (
-            <View
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: "#000",
-              }}
-            >
-              <Image
-                source={{ uri: debugPhotoUri }}
-                style={{ flex: 1 }}
-                resizeMode="contain"
-              />
-              <TouchableOpacity
-                style={{ padding: 16, alignItems: "center" }}
-                onPress={() => setDebugPhotoUri(null)}
-              >
-                <Text style={{ color: "#FFF", fontSize: 16 }}>Tutup</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
-      </Modal>
+      {/* ANDROID: kamera SENGAJA tidak dibungkus <Modal>.
+          Di Android sebuah <Modal> RN adalah Dialog dengan jendela SENDIRI.
+          PreviewView CameraX di dalam jendela terpisah itu tidak pernah
+          terkomposisi ke layar: aliran frame tetap jalan (deteksi wajah dan
+          tantangan keaktifan normal), tetapi yang tampak hanya HITAM - dan
+          gambarnya baru muncul begitu ada dialog lain yang memaksa jendela
+          menggambar ulang. Karena itu di Android kamera dirender sebagai
+          lapisan biasa di dalam pohon tampilan yang sama.
+          iOS TETAP memakai <Modal> seperti semula. */}
+      {Platform.OS === "android" ? (
+        isCameraVisible ? (
+          <View style={styles.cameraOverlay}>{cameraSurface}</View>
+        ) : null
+      ) : (
+        <Modal visible={isCameraVisible} animationType="slide">
+          {cameraSurface}
+        </Modal>
+      )}
 
       {/* Modal pendaftaran wajah (enrollment terpisah). Sengaja sebagai
           sibling dari modal kamera absen di atas - keduanya tidak akan pernah
@@ -1526,9 +2019,47 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#FFF",
   },
+  // Lapisan kamera Android: menutup seluruh layar di dalam pohon tampilan.
+  // elevation/zIndex harus di atas FAB sinkron (elevation 5).
+  diagToggle: {
+    position: "absolute",
+    left: 12,
+    zIndex: 31,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+  },
+  diagToggleText: { color: "#FFF", fontSize: 11 },
+  diagBadge: {
+    position: "absolute",
+    left: 12,
+    zIndex: 30,
+    elevation: 30,
+    color: "#FFF",
+    fontSize: 11,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    // SENGAJA tanpa elevation. PreviewView memakai SurfaceView, yang dirender
+    // di lapisan TERPISAH di belakang jendela dan mengandalkan "hole punching"
+    // agar terlihat. elevation memaksa subtree ini menjadi render layer
+    // tersendiri, dan lubang itu tidak pernah tembus -> preview HITAM padahal
+    // CameraX melaporkan frame sudah mengalir. zIndex saja sudah cukup karena
+    // tombol sinkron disembunyikan selama kamera terbuka.
+    zIndex: 20,
+  },
   cameraContainer: {
     flex: 1,
-    backgroundColor: "#000",
+    // Android: TRANSPARAN. Latar hitam opak di sini ikut menutup area lubang
+    // SurfaceView sehingga yang terlihat hanya hitam. iOS tetap hitam seperti
+    // semula (di sana preview dirender langsung ke dalam view).
+    backgroundColor: Platform.OS === "android" ? "transparent" : "#000",
     position: "relative",
   },
   camera: {
@@ -1554,17 +2085,83 @@ const styles = StyleSheet.create({
   cameraBottomArea: {
     alignItems: "center",
   },
-  liveStatusPill: {
+  langkahBaris: {
     flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 18,
+    gap: 7,
+    marginBottom: 12,
+  },
+  langkahStrip: {
+    width: 20,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.28)",
+  },
+  langkahStripAktif: {
+    backgroundColor: "#FFFFFF",
+  },
+  kartuInstruksi: {
+    flexDirection: "row",
+    alignSelf: "stretch",
+    marginHorizontal: 8,
+    paddingVertical: 16,
+    paddingLeft: 14,
+    paddingRight: 18,
     borderRadius: 20,
     overflow: "hidden",
     marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
   },
-  liveStatusText: {
-    fontSize: 13,
+  kartuPeringatan: {
+    borderColor: "rgba(255,178,36,0.34)",
+    backgroundColor: "rgba(38,27,10,0.55)",
+  },
+  kartuLolos: {
+    borderColor: "rgba(94,234,212,0.34)",
+    backgroundColor: "rgba(8,34,33,0.55)",
+  },
+  kartuGaris: {
+    width: 4,
+    borderRadius: 2,
+    marginRight: 13,
+    backgroundColor: "#FFFFFF",
+  },
+  kartuGarisPeringatan: { backgroundColor: "#FFB224" },
+  kartuGarisLolos: { backgroundColor: "#5EEAD4" },
+  kartuIsi: {
+    flex: 1,
+    gap: 5,
+  },
+  kartuJudul: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  kartuJudulPeringatan: { color: "#FFB224" },
+  kartuJudulLolos: { color: "#5EEAD4" },
+  kartuSub: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "rgba(255,255,255,0.68)",
+  },
+  // Menutupi kedipan hitam saat foto pengikatan diambil - lihat pemakaiannya
+  // di dalam cameraSurface.
+  bindingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  bindingBox: {
+    alignItems: "center",
+    paddingVertical: 22,
+    paddingHorizontal: 28,
+    borderRadius: 18,
+    overflow: "hidden",
+  },
+  bindingText: {
+    marginTop: 12,
+    fontSize: 14,
     fontWeight: "600",
     color: "#FFFFFF",
   },
