@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { Platform } from "react-native";
 import type { Face } from "react-native-vision-camera-face-detector";
 import { MIN_FACE_SIZE_RATIO } from "../utils/faceAuthNative";
 
@@ -196,6 +197,45 @@ function undiRencana(): ArahDiminta[] {
 }
 
 // ===========================================================================
+// PANAH ARAH - hanya tampilan, pemeriksaannya tetap relatif
+// ===========================================================================
+//
+// Dosen pembimbing menilai instruksi absen terlalu kecil, dan perintah "sisi
+// yang SAMA / SEBALIKNYA" menuntut pengguna mengingat tolehan sebelumnya
+// sambil menoleh. Panah di samping wajah menunjukkan sisinya langsung.
+//
+// Rencana dan pemeriksaan TIDAK berubah: rencana tetap diundi relatif, dan
+// tolehan tetap dinilai dari perbandingan tanda yaw. Panah hanya
+// menerjemahkan tanda yang DIHARAPKAN menjadi sisi layar. Sisi layar sama
+// dengan sisi tubuh pengguna karena layar menghadap pengguna, apa pun
+// pencerminan pratinjaunya.
+//
+// Yang belum diketahui hanyalah arti tanda yaw itu sendiri pada tiap
+// platform - lihat catatan SIGN-CONVENTION di atas. Karena itu nilainya
+// diisi dari PENGUKURAN DI PERANGKAT, bukan tebakan: penguji menoleh ke kanan
+// dirinya sendiri dengan TAMPILKAN_YAW menyala (LKHScreen), lalu mencatat
+// tanda yaw yang tampil. null = belum diukur: panah tidak ditampilkan dan
+// instruksi kembali ke teks relatif, jadi build yang belum diukur tetap
+// tidak pernah menunjuk arah yang keliru.
+
+/** Sisi tubuh pengguna saat yaw bernilai positif, per platform. */
+const SISI_YAW_POSITIF: Record<string, "kiri" | "kanan" | null> = {
+  ios: null,
+  android: null,
+};
+
+const SISI_POSITIF_PLATFORM = SISI_YAW_POSITIF[Platform.OS] ?? null;
+
+/** Ke sisi mana panah menunjuk; "keduanya" untuk tolehan pertama yang bebas. */
+export type ArahPanah = "kiri" | "kanan" | "keduanya";
+
+function sisiDariTanda(tanda: -1 | 1): "kiri" | "kanan" | null {
+  if (!SISI_POSITIF_PLATFORM) return null;
+  if (tanda === 1) return SISI_POSITIF_PLATFORM;
+  return SISI_POSITIF_PLATFORM === "kanan" ? "kiri" : "kanan";
+}
+
+// ===========================================================================
 // PENJAGA KESINAMBUNGAN WAJAH
 // ===========================================================================
 //
@@ -302,6 +342,8 @@ const MSG = {
   center: "Hadapkan lagi ke tengah",
   sama: "Toleh lagi ke sisi yang SAMA",
   lawan: "Toleh ke sisi SEBALIKNYA",
+  // Pengganti sama/lawan bila panah tampil - lihat SISI_YAW_POSITIF.
+  panah: "Toleh ke arah panah",
   confirm: "Hadapkan wajah lurus ke kamera",
   binding: "Memeriksa identitas",
   ulangi: "Hadapkan lurus sekali lagi",
@@ -319,6 +361,7 @@ const SUB: Record<string, string> = {
   [MSG.center]: "Lalu tunggu perintah berikutnya",
   [MSG.sama]: "Tahan sebentar sampai terdeteksi",
   [MSG.lawan]: "Tahan sebentar sampai terdeteksi",
+  [MSG.panah]: "Tahan sebentar sampai terdeteksi",
   [MSG.confirm]: "Tahan sampai pemeriksaan selesai",
   [MSG.binding]: "Jangan gerakkan perangkat dulu",
   [MSG.ulangi]: "Wajah kurang jelas saat diperiksa",
@@ -387,6 +430,12 @@ export function useLivenessChallenge(
   const [step, setStep] = useState(0);
   const [total, setTotal] = useState(rencanaRef.current.length + 2);
   const [isBinding, setIsBinding] = useState(false);
+  // Sisi yang ditunjuk panah untuk perintah tolehan terakhir. Hanya
+  // ditampilkan selama perintah tolehan itu sendiri yang tampil - lihat
+  // arahPanah pada nilai kembalian.
+  const [arahTolehan, setArahTolehan] = useState<ArahPanah | null>(
+    SISI_POSITIF_PLATFORM ? "keduanya" : null,
+  );
 
   /** Sampai kapan pesan peringatan yang sedang tampil tidak boleh ditimpa. */
   const tahanSampaiRef = useRef(0);
@@ -437,6 +486,7 @@ export function useLivenessChallenge(
     setStep(0);
     setTotal(rencanaRef.current.length + 2);
     setIsBinding(false);
+    setArahTolehan(SISI_POSITIF_PLATFORM ? "keduanya" : null);
     tampilkan(pesan);
   }, [tampilkan]);
 
@@ -636,18 +686,38 @@ export function useLivenessChallenge(
         return;
       }
 
-      /** Perintah untuk tolehan ke-n (n mulai dari 0). */
-      const perintahTolehan = (n: number): string =>
+      /** Tanda yaw yang diharapkan pada tolehan ke-n (n mulai dari 0);
+       *  null untuk tolehan pertama, yang bebas. */
+      const tandaDiharapkan = (n: number): -1 | 1 | null =>
         n === 0
-          ? MSG.first
+          ? null
           : rencanaRef.current[n - 1] === "sama"
-            ? MSG.sama
-            : MSG.lawan;
+            ? tandaTerakhirRef.current
+            : ((-tandaTerakhirRef.current) as -1 | 1);
+
+      /** Menampilkan perintah untuk tolehan ke-n beserta panahnya. */
+      const perintahkanTolehan = (n: number) => {
+        const tanda = tandaDiharapkan(n);
+        if (tanda === null) {
+          setArahTolehan(SISI_POSITIF_PLATFORM ? "keduanya" : null);
+          tampilkan(MSG.first);
+          return;
+        }
+        const sisi = sisiDariTanda(tanda);
+        setArahTolehan(sisi);
+        tampilkan(
+          sisi
+            ? MSG.panah
+            : rencanaRef.current[n - 1] === "sama"
+              ? MSG.sama
+              : MSG.lawan,
+        );
+      };
 
       switch (phaseRef.current) {
         case "turn": {
           if (Math.abs(yaw) < TURN_DEG) {
-            tampilkan(perintahTolehan(tolehanKeRef.current));
+            perintahkanTolehan(tolehanKeRef.current);
             break;
           }
           const tanda: -1 | 1 = yaw >= 0 ? 1 : -1;
@@ -665,7 +735,7 @@ export function useLivenessChallenge(
             if (tanda !== harusnya) {
               // Menoleh ke sisi yang keliru bukan kecurangan, cuma salah
               // dengar - cukup diminta ulang, jangan membatalkan tantangan.
-              tampilkan(perintahTolehan(n));
+              perintahkanTolehan(n);
               break;
             }
           }
@@ -689,7 +759,7 @@ export function useLivenessChallenge(
           if (Math.abs(yaw) <= CENTER_DEG) {
             phaseRef.current = "turn";
             perintahSejakRef.current = Date.now();
-            tampilkan(perintahTolehan(tolehanKeRef.current));
+            perintahkanTolehan(tolehanKeRef.current);
           } else {
             tampilkan(MSG.center);
           }
@@ -722,6 +792,13 @@ export function useLivenessChallenge(
     sub: SUB[instruction] ?? "",
     /** Mewarnai kartu instruksi: netral, peringatan, atau lolos. */
     nada: NADA[instruction] ?? ("netral" as NadaPesan),
+    /** Sisi yang ditunjuk panah, atau null bila tidak ada panah: platform
+     *  yang tanda yaw-nya belum diukur, atau pesan yang sedang tampil bukan
+     *  perintah tolehan (menghadap tengah, peringatan, wajah hilang). */
+    arahPanah:
+      instruction === MSG.first || instruction === MSG.panah
+        ? arahTolehan
+        : null,
     step,
     // Jumlah langkah berbeda tiap sesi karena rencananya diundi - jadi ikut
     // dilaporkan, bukan angka tetap.
