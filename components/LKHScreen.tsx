@@ -214,7 +214,7 @@ const ABAIKAN_PERIODE_KKN = false;
  *
  *  HARUS false pada berkas yang diserahkan. Bukti build bersih: teks
  *  "yaw uji:" tidak ditemukan pada bundel JS-nya. */
-const TAMPILKAN_YAW = false;
+const TAMPILKAN_YAW = true;
 
 /**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android

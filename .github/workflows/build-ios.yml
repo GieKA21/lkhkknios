@@ -1,6 +1,8 @@
 # Build iOS IPA tanpa Mac lokal.
 #
-# CABANG INI (uji/waktu-verifikasi) MENGHASILKAN BUILD DEMO UNTUK MENGUKUR
+# CABANG INI (uji/tanda-yaw, turunan uji/waktu-verifikasi) MENGHASILKAN BUILD
+# DEMO UNTUK MENGUKUR TANDA YAW (TAMPILKAN_YAW di LKHScreen). Warisan cabang
+# induknya: build demo untuk mengukur
 # WAKTU VERIFIKASI, BUKAN BUILD ASLI. Saklar ukurnya UKUR_WAKTU_VERIFIKASI di
 # utils/ukurWaktu.ts: presensi tidak disimpan, waktu tiap percobaan dicatat.
 # IPA dan tag release-nya sendiri, supaya build demo seminar tidak tertimpa.
@@ -117,7 +119,7 @@ jobs:
             cfg.expo.ios.buildNumber=process.env.GITHUB_RUN_NUMBER;
             fs.writeFileSync("app.json",JSON.stringify(cfg,null,2)+"\n");'
           VERSION=$(node -p 'require("./app.json").expo.version')
-          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER-ukur-waktu" >> "$GITHUB_ENV"
+          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER-tanda-yaw" >> "$GITHUB_ENV"
           echo "Versi aplikasi $VERSION, nomor build $GITHUB_RUN_NUMBER"
           # Dibaca dari sumbernya, bukan dari variabel lingkungan - inilah
           # saklar yang sebenarnya menentukan build ini demo atau bukan.
@@ -194,12 +196,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="uji-waktu-verifikasi"
+          TAG="uji-tanda-yaw"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --prerelease \
               --title "Build uji waktu verifikasi" \
-              --notes "IPA mode demo dari cabang uji/waktu-verifikasi, untuk mengukur waktu verifikasi (BAB IV subbab D). Presensi tidak disimpan. Bukan build rilis."
+              --notes "IPA mode demo dari cabang uji/tanda-yaw, untuk mengukur tanda sudut yaw dan menguji panah arah tolehan. Presensi tidak disimpan. Bukan build rilis."
           fi
           gh release upload "$TAG" "$IPA_NAME.ipa" --clobber
           echo "Unduh dari: $(gh release view "$TAG" --json url -q .url)"

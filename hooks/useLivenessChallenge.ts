@@ -220,8 +220,8 @@ function undiRencana(): ArahDiminta[] {
 
 /** Sisi tubuh pengguna saat yaw bernilai positif, per platform. */
 const SISI_YAW_POSITIF: Record<string, "kiri" | "kanan" | null> = {
-  ios: null,
-  android: null,
+  ios: "kanan", // TEBAKAN cabang uji - diganti hasil ukur
+  android: "kanan", // TEBAKAN cabang uji - diganti hasil ukur
 };
 
 const SISI_POSITIF_PLATFORM = SISI_YAW_POSITIF[Platform.OS] ?? null;
