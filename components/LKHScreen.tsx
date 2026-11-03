@@ -197,6 +197,16 @@ const KOMPENSASI_PENCAHAYAAN_EV = 1;
  *  terkunci hanyalah tanggal yang memang di luar periode menurut data server. */
 const ABAIKAN_PERIODE_KKN = false;
 
+/** Saklar uji: true menampilkan sudut yaw wajah di pojok layar kamera.
+ *
+ *  Hanya untuk mengisi SISI_YAW_POSITIF di hooks/useLivenessChallenge.ts:
+ *  penguji menoleh ke KANAN dirinya sendiri, lalu mencatat tanda angka yang
+ *  tampil, sekali di iPhone dan sekali di Android.
+ *
+ *  HARUS false pada berkas yang diserahkan. Bukti build bersih: teks
+ *  "yaw uji:" tidak ditemukan pada bundel JS-nya. */
+const TAMPILKAN_YAW = false;
+
 /**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
  * New Architecture (Fabric), View ber-width/height persen + borderRadius besar
@@ -418,11 +428,15 @@ export default function LKHScreen() {
   // di iOS 26). Dibatasi ~9x/detik: masih jauh lebih cepat dari gerak kepala
   // (~1 dtk/tolehan), yaw tetap tertangkap mulus.
   const lastFaceTickRef = useRef(0);
+  const [yawUji, setYawUji] = useState<number | null>(null);
   const handleCameraFaces = useCallback(
     (faces: Face[]) => {
       const now = Date.now();
       if (now - lastFaceTickRef.current < FACE_TICK_MS) return;
       lastFaceTickRef.current = now;
+      if (TAMPILKAN_YAW && faces?.length === 1) {
+        setYawUji(Math.round(faces[0].yawAngle));
+      }
       faceQualityGate.onFacesDetected(faces);
       liveness.onFacesDetected(faces);
     },
@@ -1449,9 +1463,53 @@ export default function LKHScreen() {
               <View style={styles.bindingOverlay} pointerEvents="none">
                 <BlurView intensity={40} tint="dark" style={styles.bindingBox}>
                   <ActivityIndicator size="large" color="#FFF" />
-                  <Text style={styles.bindingText}>Memeriksa identitas</Text>
+                  <Text maxFontSizeMultiplier={1.3} style={styles.bindingText}>
+                    Memeriksa identitas
+                  </Text>
                 </BlurView>
               </View>
+            )}
+
+            {/* Panah arah tolehan. Tidak tampil sama sekali pada platform
+                yang tanda yaw-nya belum diukur - lihat SISI_YAW_POSITIF di
+                hooks/useLivenessChallenge.ts. */}
+            {liveness.arahPanah && (
+              <View style={styles.panahLapisan} pointerEvents="none">
+                {liveness.arahPanah !== "kanan" && (
+                  <View style={styles.panahDeret}>
+                    {[0.65, 0.35, 0.35].map((redup, i) => (
+                      <Ionicons
+                        key={i}
+                        name="chevron-back"
+                        size={40}
+                        color={`rgba(255,255,255,${redup})`}
+                        style={styles.panahTanda}
+                      />
+                    ))}
+                  </View>
+                )}
+                <View style={{ flex: 1 }} />
+                {liveness.arahPanah !== "kiri" && (
+                  <View style={styles.panahDeret}>
+                    {[0.35, 0.35, 0.65].map((redup, i) => (
+                      <Ionicons
+                        key={i}
+                        name="chevron-forward"
+                        size={40}
+                        color={`rgba(255,255,255,${redup})`}
+                        style={styles.panahTanda}
+                      />
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+
+            {TAMPILKAN_YAW && yawUji !== null && (
+              <Text style={styles.yawUji}>
+                yaw uji: {yawUji > 0 ? "+" : ""}
+                {yawUji}
+              </Text>
             )}
 
             <View style={styles.cameraBottomArea}>
@@ -1494,16 +1552,37 @@ export default function LKHScreen() {
                   ]}
                 />
                 <View style={styles.kartuIsi}>
-                  <Text
-                    style={[
-                      styles.kartuJudul,
-                      liveness.nada === "peringatan" && styles.kartuJudulPeringatan,
-                      liveness.nada === "lolos" && styles.kartuJudulLolos,
-                    ]}
-                  >
-                    {liveness.instruction}
-                  </Text>
-                  <Text style={styles.kartuSub}>
+                  <View style={styles.kartuJudulBaris}>
+                    {liveness.arahPanah && (
+                      <Ionicons
+                        name={
+                          liveness.arahPanah === "kanan"
+                            ? "arrow-forward"
+                            : liveness.arahPanah === "kiri"
+                              ? "arrow-back"
+                              : "swap-horizontal"
+                        }
+                        size={28}
+                        color="#FFFFFF"
+                      />
+                    )}
+                    {/* Paling banyak dua baris: di ponsel sempit hurufnya
+                        sedikit mengecil, bukan melipat jadi tiga baris. */}
+                    <Text
+                      numberOfLines={2}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                      maxFontSizeMultiplier={1.3}
+                      style={[
+                        styles.kartuJudul,
+                        liveness.nada === "peringatan" && styles.kartuJudulPeringatan,
+                        liveness.nada === "lolos" && styles.kartuJudulLolos,
+                      ]}
+                    >
+                      {liveness.instruction}
+                    </Text>
+                  </View>
+                  <Text maxFontSizeMultiplier={1.3} style={styles.kartuSub}>
                     {liveness.passed ? faceQualityGate.message : liveness.sub}
                   </Text>
                 </View>
@@ -1979,7 +2058,7 @@ const styles = StyleSheet.create({
   },
   attendanceHint: {
     textAlign: "center",
-    fontSize: 12,
+    fontSize: 14,
     color: TEXT_SECONDARY,
     marginTop: 8,
   },
@@ -2134,15 +2213,18 @@ const styles = StyleSheet.create({
   cameraBottomArea: {
     alignItems: "center",
   },
+  // Ukuran instruksi diperbesar 4 November 2026 atas masukan dosen
+  // pembimbing: instruksi dibaca dari sudut mata sambil menoleh, dengan
+  // ponsel sejauh lengan - lihat docs/rencana-ukuran-instruksi-absen.md.
   langkahBaris: {
     flexDirection: "row",
-    gap: 7,
-    marginBottom: 12,
+    gap: 8,
+    marginBottom: 14,
   },
   langkahStrip: {
-    width: 20,
-    height: 5,
-    borderRadius: 3,
+    width: 28,
+    height: 7,
+    borderRadius: 4,
     backgroundColor: "rgba(255,255,255,0.28)",
   },
   langkahStripAktif: {
@@ -2151,10 +2233,9 @@ const styles = StyleSheet.create({
   kartuInstruksi: {
     flexDirection: "row",
     alignSelf: "stretch",
-    marginHorizontal: 8,
-    paddingVertical: 16,
+    paddingVertical: 18,
     paddingLeft: 14,
-    paddingRight: 18,
+    paddingRight: 14,
     borderRadius: 20,
     overflow: "hidden",
     marginBottom: 18,
@@ -2179,19 +2260,55 @@ const styles = StyleSheet.create({
   kartuGarisLolos: { backgroundColor: "#5EEAD4" },
   kartuIsi: {
     flex: 1,
-    gap: 5,
+    gap: 6,
+  },
+  kartuJudulBaris: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   kartuJudul: {
-    fontSize: 18,
+    flexShrink: 1,
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: "700",
     color: "#FFFFFF",
   },
   kartuJudulPeringatan: { color: "#FFB224" },
   kartuJudulLolos: { color: "#5EEAD4" },
   kartuSub: {
-    fontSize: 12,
+    fontSize: 16,
+    lineHeight: 21,
     fontWeight: "500",
-    color: "rgba(255,255,255,0.68)",
+    color: "rgba(255,255,255,0.85)",
+  },
+  // Panah arah tolehan di kedua sisi wajah, setinggi tengah layar. Tiga
+  // tanda yang makin terang ke arah yang dituju, mengikuti sketsa mahasiswa.
+  panahLapisan: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+  },
+  panahDeret: {
+    flexDirection: "row",
+  },
+  panahTanda: {
+    marginHorizontal: -9,
+  },
+  // Angka yaw untuk mengukur SISI_YAW_POSITIF - lihat TAMPILKAN_YAW.
+  yawUji: {
+    position: "absolute",
+    left: 16,
+    top: 120,
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "700",
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    overflow: "hidden",
   },
   // Menutupi kedipan hitam saat foto pengikatan diambil - lihat pemakaiannya
   // di dalam cameraSurface.
@@ -2210,7 +2327,7 @@ const styles = StyleSheet.create({
   },
   bindingText: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: "600",
     color: "#FFFFFF",
   },
