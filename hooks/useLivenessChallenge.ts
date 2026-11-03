@@ -220,7 +220,10 @@ function undiRencana(): ArahDiminta[] {
 
 /** Sisi tubuh pengguna saat yaw bernilai positif, per platform. */
 const SISI_YAW_POSITIF: Record<string, "kiri" | "kanan" | null> = {
-  ios: null,
+  // Diukur 4 November 2026, iPhone 16 (build61 cabang uji/tanda-yaw): menoleh
+  // ke kanan memberi yaw positif (+16, +23), dan tantangan lulus dengan
+  // mengikuti panah.
+  ios: "kanan",
   android: null,
 };
 
