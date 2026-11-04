@@ -219,8 +219,10 @@ const TAMPILKAN_YAW = true;
 
 // Catatan uji skor tolehan - lihat handleTolehan. Disimpan lokal saja.
 const KUNCI_SKOR_TOLEH = "uji_skor_toleh";
+type JenisUji = "toleh" | "balik";
 type SampelToleh = {
   pada: string;
+  jenis: JenisUji;
   platform: string;
   tolehanKe: number;
   yawFrame: number;
@@ -246,6 +248,7 @@ function teksSkorToleh(semua: SampelToleh[]): string {
     [
       i + 1,
       b.pada,
+      b.jenis,
       b.platform,
       b.tolehanKe,
       b.yawFrame,
@@ -256,7 +259,7 @@ function teksSkorToleh(semua: SampelToleh[]): string {
   );
   return [
     `Uji skor wajah menoleh (n = ${semua.length})`,
-    "no,waktu,platform,tolehan,yaw_frame,yaw_foto,skor,galat",
+    "no,waktu,jenis,platform,tolehan,yaw_frame,yaw_foto,skor,galat",
     ...baris,
   ].join("\n");
 }
@@ -405,12 +408,24 @@ export default function LKHScreen() {
   const tolehBerjalanRef = useRef<Promise<void> | null>(null);
   const [skorToleh, setSkorToleh] = useState<string | null>(null);
   const [jumlahSkor, setJumlahSkor] = useState(0);
+  // Satu jenis per sesi: satu jepretan memakan beberapa detik di Android,
+  // jadi jepretan "balik" hampir selalu terlewat bila "toleh" juga berjalan.
+  // Ref untuk dibaca callback (supaya tetap stabil), state untuk tampilan.
+  const modeUjiRef = useRef<JenisUji>("toleh");
+  const [modeUji, setModeUji] = useState<JenisUji>("toleh");
   const handleTolehan = useCallback(
-    (tolehanKe: number, yawFrame: number) => {
-      if (!TAMPILKAN_YAW || tolehBerjalanRef.current) return;
+    (jenis: JenisUji, tolehanKe: number, yawFrame: number) => {
+      if (
+        !TAMPILKAN_YAW ||
+        jenis !== modeUjiRef.current ||
+        tolehBerjalanRef.current
+      ) {
+        return;
+      }
       const kerja = (async () => {
         const baris: SampelToleh = {
           pada: new Date().toISOString(),
+          jenis,
           platform: `${Platform.OS} ${Platform.Version}`,
           tolehanKe,
           yawFrame: Math.round(yawFrame),
@@ -438,8 +453,8 @@ export default function LKHScreen() {
         setJumlahSkor(semua.length);
         setSkorToleh(
           baris.skor !== null
-            ? `toleh ${tolehanKe}: ${baris.skor.toFixed(3)} (yaw foto ${baris.yawFoto})`
-            : `toleh ${tolehanKe}: gagal (${baris.galat ?? "belum terdaftar"})`,
+            ? `${jenis} ${tolehanKe}: ${baris.skor.toFixed(3)} (yaw foto ${baris.yawFoto})`
+            : `${jenis} ${tolehanKe}: gagal (${baris.galat ?? "belum terdaftar"})`,
         );
       })();
       tolehBerjalanRef.current = kerja.finally(() => {
@@ -1650,6 +1665,21 @@ export default function LKHScreen() {
             )}
             {TAMPILKAN_YAW && (
               <TouchableOpacity
+                style={styles.modeUji}
+                onPress={() => {
+                  const berikut: JenisUji =
+                    modeUjiRef.current === "toleh" ? "balik" : "toleh";
+                  modeUjiRef.current = berikut;
+                  setModeUji(berikut);
+                }}
+              >
+                <Text style={styles.skorUjiTeks}>
+                  {`mode: ${modeUji === "toleh" ? "TOLEH (saat menoleh)" : "BALIK (saat kembali ke tengah)"} - ketuk ganti`}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {TAMPILKAN_YAW && (
+              <TouchableOpacity
                 style={styles.skorUji}
                 onPress={async () =>
                   Share.share({ message: teksSkorToleh(await bacaSkorToleh()) })
@@ -2476,6 +2506,16 @@ const styles = StyleSheet.create({
     top: 170,
     right: 90,
     backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  modeUji: {
+    position: "absolute",
+    left: 16,
+    top: 240,
+    right: 90,
+    backgroundColor: "rgba(0,60,120,0.75)",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,

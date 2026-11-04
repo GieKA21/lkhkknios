@@ -114,6 +114,11 @@ const MAKS_ULANG_MUTU = 1;
  */
 const TICK_TENGAH_MANTAP = 3;
 
+/** KHUSUS CABANG UJI uji/skor-toleh: sudut di bawah ini, sesudah sebuah
+ *  tolehan, dianggap titik "balik" - kepala sedang kembali ke tengah,
+ *  sudutnya sudah kecil tetapi belum diam. */
+const BATAS_BALIK_DEG = 15;
+
 /**
  * Lama penutup layar ditahan setelah foto pengikatan diambil, menunggu
  * pengukuran pencahayaan iOS kembali mantap. Lihat alasan lengkapnya di
@@ -397,12 +402,18 @@ const MENDESAK: readonly string[] = [MSG.binding, MSG.passed];
 
 export function useLivenessChallenge(
   onBind?: () => Promise<HasilPengikatan>,
-  // KHUSUS CABANG UJI uji/skor-toleh: dipanggil tiap kali satu tolehan sah
-  // tercatat, untuk mengukur kemiripan wajah yang sedang menoleh.
-  onTolehan?: (tolehanKe: number, yawFrame: number) => void,
+  // KHUSUS CABANG UJI uji/skor-toleh: "toleh" dipanggil tiap kali satu
+  // tolehan sah tercatat, "balik" sekali sesudahnya saat kepala kembali ke
+  // bawah BATAS_BALIK_DEG. Untuk mengukur kemiripan wajah yang bergerak.
+  onTolehan?: (
+    jenis: "toleh" | "balik",
+    tolehanKe: number,
+    yawFrame: number,
+  ) => void,
 ) {
   const onTolehanRef = useRef(onTolehan);
   onTolehanRef.current = onTolehan;
+  const balikDicatatRef = useRef(true);
   // State mesin disimpan di ref, bukan useState: onFacesDetected dipanggil
   // per frame dan harus stabil (tidak dibuat ulang tiap render), jadi ia
   // tidak boleh menutup nilai state yang bisa basi. useState hanya untuk
@@ -719,6 +730,16 @@ export function useLivenessChallenge(
         );
       };
 
+      if (
+        !balikDicatatRef.current &&
+        (phaseRef.current === "center" ||
+          phaseRef.current === "confirm-center") &&
+        Math.abs(yaw) <= BATAS_BALIK_DEG
+      ) {
+        balikDicatatRef.current = true;
+        onTolehanRef.current?.("balik", tolehanKeRef.current, yaw);
+      }
+
       switch (phaseRef.current) {
         case "turn": {
           if (Math.abs(yaw) < TURN_DEG) {
@@ -746,7 +767,8 @@ export function useLivenessChallenge(
           }
 
           tandaTerakhirRef.current = tanda;
-          onTolehanRef.current?.(n + 1, yaw);
+          onTolehanRef.current?.("toleh", n + 1, yaw);
+          balikDicatatRef.current = false;
           tolehanKeRef.current = n + 1;
           setStep(n + 1);
           perintahSejakRef.current = Date.now();
