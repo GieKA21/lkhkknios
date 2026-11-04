@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
+import * as ImageManipulator from "expo-image-manipulator";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -37,6 +38,26 @@ import {
 interface CaptureSlot {
   embedding: Float32Array;
   photoUri: string;
+  // Hanya untuk kotak pratinjau. Di Android <Image> menampilkan JPEG kamera
+  // apa adanya tanpa membaca tag orientasi EXIF, sehingga wajah tampak
+  // terbaring 90 derajat (Redmi Note 6 Pro, Android 9). Deteksi dan embedding
+  // tidak terdampak: MLKit (fromFilePath) dan expo-image-manipulator sama-sama
+  // membaca EXIF. Salinan kecil dari manipulator sudah tegak pikselnya.
+  thumbUri: string;
+}
+
+async function buatThumbnailTegak(photoUri: string): Promise<string> {
+  if (Platform.OS !== "android") return photoUri;
+  try {
+    const hasil = await ImageManipulator.manipulateAsync(
+      photoUri,
+      [{ resize: { width: 240 } }],
+      { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+    );
+    return hasil.uri;
+  } catch {
+    return photoUri;
+  }
 }
 
 interface FaceEnrollmentModalProps {
@@ -159,7 +180,8 @@ export default function FaceEnrollmentModal({
         }
       }
 
-      setCaptures((prev) => [...prev, { embedding, photoUri }]);
+      const thumbUri = await buatThumbnailTegak(photoUri);
+      setCaptures((prev) => [...prev, { embedding, photoUri, thumbUri }]);
     } catch (error) {
       if (error instanceof NoFaceDetectedError) {
         Alert.alert("Wajah Tidak Terdeteksi", error.message);
@@ -304,7 +326,7 @@ export default function FaceEnrollmentModal({
               >
                 {captures[i] ? (
                   <Image
-                    source={{ uri: captures[i].photoUri }}
+                    source={{ uri: captures[i].thumbUri }}
                     style={styles.slotImage}
                   />
                 ) : (
