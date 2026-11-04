@@ -197,7 +197,7 @@ const KOMPENSASI_PENCAHAYAAN_EV = 1;
  *  Mematikannya TIDAK memblokir siapa pun secara tak terduga: isWithinKKNPeriod
  *  tetap fail-open bila server belum mengirim tanggal periodenya, jadi yang
  *  terkunci hanyalah tanggal yang memang di luar periode menurut data server. */
-const ABAIKAN_PERIODE_KKN = false;
+const ABAIKAN_PERIODE_KKN = true; // HANYA cabang uji/periode-terbuka - jangan digabung
 
 /** Saklar uji: true menampilkan sudut yaw wajah di pojok layar kamera.
  *

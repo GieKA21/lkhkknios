@@ -99,7 +99,7 @@ jobs:
             cfg.expo.ios.buildNumber=process.env.GITHUB_RUN_NUMBER;
             fs.writeFileSync("app.json",JSON.stringify(cfg,null,2)+"\n");'
           VERSION=$(node -p 'require("./app.json").expo.version')
-          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "IPA_NAME=lkh-kkn-ios-v$VERSION-build$GITHUB_RUN_NUMBER-periode-terbuka" >> "$GITHUB_ENV"
           echo "Versi aplikasi $VERSION, nomor build $GITHUB_RUN_NUMBER"
 
       - name: Generate native iOS project (prebuild + pod install)
@@ -175,12 +175,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-uji"
+          TAG="ios-periode-terbuka"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --prerelease \
               --title "Build uji iOS" \
-              --notes "IPA tanpa tanda tangan dari cabang pengembangan, menghadap server LKH KKN sungguhan. Build pengujian, bukan rilis."
+              --notes "IPA tanpa tanda tangan dari cabang uji/periode-terbuka (fitur/instruksi-panah dengan pemeriksaan periode KKN dimatikan), menghadap server LKH KKN sungguhan. Build pengujian, bukan rilis."
           fi
           gh release upload "$TAG" "$IPA_NAME.ipa" --clobber
           echo "Unduh dari: $(gh release view "$TAG" --json url -q .url)"
