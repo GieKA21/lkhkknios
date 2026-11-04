@@ -312,29 +312,50 @@ async function detectSingleFace(photoUri: string): Promise<Face> {
   return faces[0];
 }
 
-function qualityGate(face: Face): void {
+/**
+ * `wajahMenoleh` dipakai HANYA oleh pemeriksaan identitas pada tolehan
+ * terakhir (getFaceEmbeddingToleh). Dua syarat tidak masuk akal untuk wajah
+ * yang memang diminta menoleh: batas yaw, dan kedua mata terbuka - saat kepala
+ * menoleh, mata yang jauh dari kamera tampak menyipit dan MLKit membacanya
+ * terpejam. Pada uji perangkat 4 November 2026 syarat dua mata menggagalkan
+ * 5 dari 15 jepretan pemilik di iPhone dan 9 dari 14 di Android. Untuk wajah
+ * menoleh cukup SATU mata yang terbuka.
+ */
+function qualityGate(face: Face, wajahMenoleh = false): void {
   const reasons: string[] = [];
 
   if (face.bounds.width / face.frameWidth < MIN_FACE_SIZE_RATIO) {
     reasons.push("wajah terlalu kecil/jauh dari kamera");
   }
-  if (Math.abs(face.yawAngle) > MAX_YAW_DEG) {
+  if (!wajahMenoleh && Math.abs(face.yawAngle) > MAX_YAW_DEG) {
     reasons.push("kepala terlalu menoleh ke samping");
   }
   if (Math.abs(face.pitchAngle) > MAX_PITCH_DEG) {
     reasons.push("kepala terlalu menunduk/mendongak");
   }
-  if (
-    face.leftEyeOpenProbability !== undefined &&
-    face.leftEyeOpenProbability < MIN_EYE_OPEN_PROB
-  ) {
-    reasons.push("mata kiri tidak cukup terbuka");
-  }
-  if (
-    face.rightEyeOpenProbability !== undefined &&
-    face.rightEyeOpenProbability < MIN_EYE_OPEN_PROB
-  ) {
-    reasons.push("mata kanan tidak cukup terbuka");
+  if (wajahMenoleh) {
+    const kiri = face.leftEyeOpenProbability;
+    const kanan = face.rightEyeOpenProbability;
+    if (
+      kiri !== undefined &&
+      kanan !== undefined &&
+      Math.max(kiri, kanan) < MIN_EYE_OPEN_PROB
+    ) {
+      reasons.push("mata tidak cukup terbuka");
+    }
+  } else {
+    if (
+      face.leftEyeOpenProbability !== undefined &&
+      face.leftEyeOpenProbability < MIN_EYE_OPEN_PROB
+    ) {
+      reasons.push("mata kiri tidak cukup terbuka");
+    }
+    if (
+      face.rightEyeOpenProbability !== undefined &&
+      face.rightEyeOpenProbability < MIN_EYE_OPEN_PROB
+    ) {
+      reasons.push("mata kanan tidak cukup terbuka");
+    }
   }
 
   if (reasons.length > 0) {
@@ -619,10 +640,32 @@ function l2Normalize(vec: Float32Array): Float32Array {
  * when the photo isn't usable.
  */
 export async function getFaceEmbedding(photoUri: string): Promise<Float32Array> {
+  return (await embedDariFoto(photoUri, false)).embedding;
+}
+
+/**
+ * Embedding dari foto wajah yang SEDANG MENOLEH, untuk pengikatan identitas
+ * pada tolehan terakhir tantangan keaktifan (lihat hooks/useLivenessChallenge
+ * dan handleTurnBind di LKHScreen). Jalur prapemrosesannya sama persis dengan
+ * getFaceEmbedding; yang berbeda hanya gerbang mutunya (lihat qualityGate).
+ * Yaw foto ikut dikembalikan: pemanggil wajib memastikan foto itu sendiri
+ * memang menunjukkan wajah menoleh - lihat MIN_YAW_FOTO_TOLEH_DEG.
+ */
+export async function getFaceEmbeddingToleh(
+  photoUri: string,
+): Promise<{ embedding: Float32Array; yaw: number }> {
+  const { embedding, face } = await embedDariFoto(photoUri, true);
+  return { embedding, yaw: face.yawAngle };
+}
+
+async function embedDariFoto(
+  photoUri: string,
+  wajahMenoleh: boolean,
+): Promise<{ embedding: Float32Array; face: Face }> {
   await cleanupLegacyKeysOnce();
 
   const face = await detectSingleFace(photoUri);
-  qualityGate(face);
+  qualityGate(face, wajahMenoleh);
 
   // Without both eye landmarks the canonical alignment cannot be computed.
   // Fail here rather than falling back to a plain box crop: an unaligned
@@ -679,7 +722,7 @@ export async function getFaceEmbedding(photoUri: string): Promise<Float32Array> 
         ` aligned ${alignedInfo} nan ${nanCount}/${embedding.length}]`,
     );
   }
-  return embedding;
+  return { embedding, face };
 }
 
 /**
@@ -736,6 +779,35 @@ export function faceSimilarity(a: Float32Array | number[], b: Float32Array | num
 // Skor genuine di lapangan 0.80-0.91, impostor ~0.48, jadi 0.673 menolak
 // impostor dengan aman tanpa menolak pemilik. Naik dari 0.47 -> 0.673.
 export const FACE_MATCH_THRESHOLD = 0.673;
+
+/**
+ * Ambang kemiripan untuk foto wajah yang SEDANG MENOLEH (pengikatan identitas
+ * pada tolehan terakhir). Terpisah dari FACE_MATCH_THRESHOLD karena wajah
+ * menoleh 20-40 derajat yang dibandingkan dengan set terdaftar yang sebagian
+ * besar lurus memang mendapat skor lebih rendah, juga untuk pemiliknya.
+ *
+ * ANGKA SEMENTARA, dari satu uji perangkat (4 November 2026, iPhone 16, dua
+ * orang, berkas di tools/face-calibration/uji-skor-toleh/): orang lain
+ * tertinggi 0,2295 (n = 10), pemilik terendah 0,5908 (n = 10). 0,40 berada di
+ * antara keduanya. Separuh skor pemilik ada di bawah 0,673, jadi ambang wajah
+ * lurus tidak dapat dipakai di sini. Harus diukur ulang dengan lebih banyak
+ * orang dan perangkat sebelum dianggap final.
+ *
+ * Bukan satu-satunya penjaga identitas: wajah lurus tetap diperiksa dengan
+ * FACE_MATCH_THRESHOLD sesudahnya, begitu juga foto absen. Tugas pemeriksaan
+ * ini adalah MENGIKAT identitas ke gerakan, supaya tolehan tidak dapat
+ * dikerjakan orang lain lalu diganti foto pemilik akun.
+ */
+export const FACE_MATCH_THRESHOLD_TOLEH = 0.4;
+
+/**
+ * |yaw| minimum pada FOTO pengikatan wajah menoleh. Foto yang wajahnya sudah
+ * kembali lurus tidak dihitung: di Android jepretan bisa terambil satu-dua
+ * detik sesudah perintahnya (uji 4 November 2026: semua foto Android 16 hanya
+ * 1-5 derajat), dan jeda itulah yang dulu dipakai untuk menyodorkan foto
+ * pemilik di layar HP lain. Foto diam di layar tidak dapat menoleh.
+ */
+export const MIN_YAW_FOTO_TOLEH_DEG = 15;
 
 /**
  * Enrollment cross-check ONLY (enforced per-capture in

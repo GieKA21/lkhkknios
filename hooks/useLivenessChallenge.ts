@@ -101,6 +101,10 @@ const CENTER_DEG = 10;
 // sebelum tantangan diulang dari awal. Kegagalan MUTU bukan kegagalan
 // identitas, jadi tidak adil kalau langsung mengulang semuanya.
 const MAKS_ULANG_MUTU = 1;
+// Berapa kali tolehan terakhir boleh diulang karena fotonya tidak terpakai
+// (wajah sudah kembali lurus saat terpotret, atau kurang jelas) sebelum
+// tantangan diulang dari awal. Lihat jalankanIkatToleh.
+const MAKS_ULANG_TOLEH = 2;
 
 /**
  * Berapa tick berturut-turut wajah harus sudah menghadap tengah sebelum foto
@@ -330,7 +334,13 @@ function masihSinambung(
  */
 export type HasilPengikatan = "ok" | "ulangi" | "gagal";
 
-type Phase = "turn" | "center" | "confirm-center" | "binding" | "passed";
+type Phase =
+  | "turn"
+  | "turn-bind"
+  | "center"
+  | "confirm-center"
+  | "binding"
+  | "passed";
 
 /** Baris utama tiap pesan. Sengaja pendek: satu kalimat panjang pada pil
  *  sempit melipat jadi tiga baris dan tidak terbaca sambil menoleh.
@@ -344,6 +354,8 @@ const MSG = {
   lawan: "Toleh ke sisi SEBALIKNYA",
   // Pengganti sama/lawan bila panah tampil - lihat SISI_YAW_POSITIF.
   panah: "Toleh ke arah panah",
+  tahanToleh: "Tahan tolehan",
+  tolehKurang: "Tolehan kurang lama",
   confirm: "Hadapkan wajah lurus ke kamera",
   binding: "Memeriksa identitas",
   ulangi: "Hadapkan lurus sekali lagi",
@@ -362,6 +374,8 @@ const SUB: Record<string, string> = {
   [MSG.sama]: "Tahan sebentar sampai terdeteksi",
   [MSG.lawan]: "Tahan sebentar sampai terdeteksi",
   [MSG.panah]: "Tahan sebentar sampai terdeteksi",
+  [MSG.tahanToleh]: "Jangan kembali ke tengah dulu",
+  [MSG.tolehKurang]: "Toleh lagi dan tahan sampai diperiksa",
   [MSG.confirm]: "Tahan sampai pemeriksaan selesai",
   [MSG.binding]: "Jangan gerakkan perangkat dulu",
   [MSG.ulangi]: "Wajah kurang jelas saat diperiksa",
@@ -375,6 +389,7 @@ export type NadaPesan = "netral" | "peringatan" | "lolos";
 
 const NADA: Record<string, NadaPesan> = {
   [MSG.ulangi]: "peringatan",
+  [MSG.tolehKurang]: "peringatan",
   [MSG.putus]: "peringatan",
   [MSG.lambat]: "peringatan",
   [MSG.pengikatanLambat]: "peringatan",
@@ -391,12 +406,15 @@ const TAHAN_PESAN_MS = 2000;
 
 /** Pesan yang ditahan, dan pesan yang boleh menerobos penahanan. */
 const DITAHAN: readonly string[] = [
-  MSG.ulangi, MSG.putus, MSG.lambat, MSG.pengikatanLambat,
+  MSG.ulangi, MSG.putus, MSG.lambat, MSG.pengikatanLambat, MSG.tolehKurang,
 ];
-const MENDESAK: readonly string[] = [MSG.binding, MSG.passed];
+const MENDESAK: readonly string[] = [MSG.binding, MSG.passed, MSG.tahanToleh];
 
 export function useLivenessChallenge(
   onBind?: () => Promise<HasilPengikatan>,
+  // Pengikatan identitas pada tolehan TERAKHIR, saat wajah masih menoleh.
+  // Tanpa callback ini perilakunya sama dengan sebelumnya.
+  onTurnBind?: () => Promise<HasilPengikatan>,
 ) {
   // State mesin disimpan di ref, bukan useState: onFacesDetected dipanggil
   // per frame dan harus stabil (tidak dibuat ulang tiap render), jadi ia
@@ -424,6 +442,12 @@ export function useLivenessChallenge(
   // ia tidak boleh menutup callback yang dibuat ulang tiap render.
   const onBindRef = useRef(onBind);
   onBindRef.current = onBind;
+  const onTurnBindRef = useRef(onTurnBind);
+  onTurnBindRef.current = onTurnBind;
+  // Untuk mengulang tolehan terakhir: arah tolehan SEBELUM tolehan itu, dan
+  // berapa kali sudah diulang.
+  const tandaSebelumTolehRef = useRef<-1 | 1>(1);
+  const ulangTolehRef = useRef(0);
 
   const [passed, setPassed] = useState(false);
   const [instruction, setInstruction] = useState<string>(MSG.first);
@@ -479,6 +503,7 @@ export function useLivenessChallenge(
     tandaTerakhirRef.current = 1;
     perintahSejakRef.current = Date.now();
     ulangMutuRef.current = 0;
+    ulangTolehRef.current = 0;
     kotakRef.current = null;
     tickHilangRef.current = 0;
     tickTengahRef.current = 0;
@@ -493,6 +518,72 @@ export function useLivenessChallenge(
   const reset = useCallback(() => {
     resetDenganPesan(MSG.first);
   }, [resetDenganPesan]);
+
+  /**
+   * PENGIKATAN IDENTITAS PADA WAJAH YANG MENOLEH - penutup celah tukar wajah.
+   *
+   * Uji perangkat 4 November 2026: mahasiswa mendaftarkan wajah temannya,
+   * mengerjakan tolehan dengan wajahnya sendiri, lalu dalam jeda antara
+   * tolehan terakhir dan "Memeriksa identitas" menyodorkan foto teman di
+   * layar HP lain. Absen diterima (kemiripan 0,8134). Pemeriksaan wajah lurus
+   * terjadi SESUDAH gerakan, dan yang menjembatani keduanya hanya geometri
+   * kotak wajah - yang tidak tahu siapa pemilik wajahnya.
+   *
+   * Karena itu identitas kini diperiksa juga pada tolehan terakhir itu
+   * sendiri, sementara pengguna menahan kepalanya menoleh. Foto diam di layar
+   * tidak dapat menoleh, jadi yang lolos di sini haruslah wajah pemilik yang
+   * memang bergerak. Penyerang tinggal punya jalan rekaman video pemilik yang
+   * menoleh, yang sudah tercatat sebagai keterbatasan.
+   *
+   * Selama fase ini frame TIDAK diabaikan: penjaga kesinambungan tetap
+   * berjalan, jadi wajah yang hilang atau melompat tetap membatalkan.
+   */
+  const jalankanIkatToleh = useCallback(async () => {
+    const ikat = onTurnBindRef.current;
+    if (!ikat) return;
+    tampilkan(MSG.tahanToleh);
+    let hasil: HasilPengikatan | "lambat";
+    try {
+      hasil = await Promise.race<HasilPengikatan | "lambat">([
+        ikat(),
+        new Promise<"lambat">((lanjut) =>
+          setTimeout(() => lanjut("lambat"), BATAS_WAKTU_PENGIKATAN_MS),
+        ),
+      ]);
+    } catch {
+      hasil = "ulangi";
+    }
+    // Penjaga kesinambungan mungkin sudah membatalkan tantangan selagi foto
+    // diproses - hasil yang datang sesudahnya tidak berlaku lagi.
+    if (phaseRef.current !== "turn-bind") return;
+
+    if (hasil === "ok") {
+      phaseRef.current = "confirm-center";
+      tickTengahRef.current = 0;
+      perintahSejakRef.current = Date.now();
+      tampilkan(MSG.confirm);
+      return;
+    }
+    if (hasil === "lambat") {
+      resetDenganPesan(MSG.pengikatanLambat);
+      return;
+    }
+    if (hasil === "ulangi" && ulangTolehRef.current < MAKS_ULANG_TOLEH) {
+      // Ulangi tolehan terakhir saja, ke sisi yang sama: kembalikan arah
+      // acuan ke arah sebelum tolehan itu, lalu minta kembali ke tengah.
+      ulangTolehRef.current += 1;
+      const n = rencanaRef.current.length;
+      tolehanKeRef.current = n;
+      tandaTerakhirRef.current = tandaSebelumTolehRef.current;
+      setStep(n);
+      phaseRef.current = "center";
+      perintahSejakRef.current = Date.now();
+      tampilkan(MSG.tolehKurang);
+      return;
+    }
+    // Bukan pemilik akun, atau fotonya gagal terus - ulang dari awal.
+    resetDenganPesan(MSG.first);
+  }, [resetDenganPesan, tampilkan]);
 
   const jalankanPengikatan = useCallback(async () => {
     const bind = onBindRef.current;
@@ -680,6 +771,7 @@ export function useLivenessChallenge(
       // jendela waktu yang baru dibuka aplikasi.
       if (
         phaseRef.current !== "confirm-center" &&
+        phaseRef.current !== "turn-bind" &&
         Date.now() - perintahSejakRef.current > BATAS_WAKTU_PERINTAH_MS
       ) {
         resetDenganPesan(MSG.lambat);
@@ -740,14 +832,20 @@ export function useLivenessChallenge(
             }
           }
 
+          tandaSebelumTolehRef.current = tandaTerakhirRef.current;
           tandaTerakhirRef.current = tanda;
           tolehanKeRef.current = n + 1;
           setStep(n + 1);
           perintahSejakRef.current = Date.now();
 
           if (tolehanKeRef.current > rencanaRef.current.length) {
-            phaseRef.current = "confirm-center";
-            tampilkan(MSG.confirm);
+            if (onTurnBindRef.current) {
+              phaseRef.current = "turn-bind";
+              void jalankanIkatToleh();
+            } else {
+              phaseRef.current = "confirm-center";
+              tampilkan(MSG.confirm);
+            }
           } else {
             phaseRef.current = "center";
             tampilkan(MSG.center);
@@ -782,7 +880,7 @@ export function useLivenessChallenge(
           break;
       }
     },
-    [jalankanPengikatan, resetDenganPesan, tampilkan],
+    [jalankanIkatToleh, jalankanPengikatan, resetDenganPesan, tampilkan],
   );
 
   return {
@@ -796,7 +894,9 @@ export function useLivenessChallenge(
      *  yang tanda yaw-nya belum diukur, atau pesan yang sedang tampil bukan
      *  perintah tolehan (menghadap tengah, peringatan, wajah hilang). */
     arahPanah:
-      instruction === MSG.first || instruction === MSG.panah
+      instruction === MSG.first ||
+      instruction === MSG.panah ||
+      instruction === MSG.tahanToleh
         ? arahTolehan
         : null,
     step,
