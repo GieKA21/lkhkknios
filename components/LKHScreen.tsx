@@ -1514,7 +1514,7 @@ export default function LKHScreen() {
               <View style={styles.panahLapisan} pointerEvents="none">
                 {liveness.arahPanah !== "kanan" && (
                   <View style={styles.panahDeret}>
-                    {[0.65, 0.35, 0.35].map((redup, i) => (
+                    {[1, 0.6, 0.6].map((redup, i) => (
                       <Ionicons
                         key={i}
                         name="chevron-back"
@@ -1528,7 +1528,7 @@ export default function LKHScreen() {
                 <View style={{ flex: 1 }} />
                 {liveness.arahPanah !== "kiri" && (
                   <View style={styles.panahDeret}>
-                    {[0.35, 0.35, 0.65].map((redup, i) => (
+                    {[0.6, 0.6, 1].map((redup, i) => (
                       <Ionicons
                         key={i}
                         name="chevron-forward"
@@ -2321,6 +2321,8 @@ const styles = StyleSheet.create({
   },
   // Panah arah tolehan di kedua sisi wajah, setinggi tengah layar. Tiga
   // tanda yang makin terang ke arah yang dituju, mengikuti sketsa mahasiswa.
+  // Kapsul gelap dan bayangan di belakangnya: putih tembus pandang saja
+  // hilang di latar langit siang (diuji 4 November 2026).
   panahLapisan: {
     ...StyleSheet.absoluteFillObject,
     flexDirection: "row",
@@ -2329,9 +2331,16 @@ const styles = StyleSheet.create({
   },
   panahDeret: {
     flexDirection: "row",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 28,
+    backgroundColor: "rgba(0,0,0,0.45)",
   },
   panahTanda: {
     marginHorizontal: -9,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   // Angka yaw untuk mengukur SISI_YAW_POSITIF - lihat TAMPILKAN_YAW.
   yawUji: {
