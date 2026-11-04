@@ -1,4 +1,4 @@
-import { FACE_MATCH_THRESHOLD } from "./faceAuthNative";
+import { FACE_MATCH_THRESHOLD, FACE_MATCH_THRESHOLD_TOLEH } from "./faceAuthNative";
 import { similarityToEnrollment } from "./faceEnrollment";
 
 /**
@@ -63,6 +63,24 @@ export async function decideAttendance(
   if (similarity === null) return { kind: "not-enrolled" };
 
   const threshold = FACE_MATCH_THRESHOLD;
+  return similarity >= threshold
+    ? { kind: "accepted", similarity, threshold }
+    : { kind: "rejected", similarity, threshold };
+}
+
+/**
+ * Putusan agen atas embedding dari foto wajah yang SEDANG MENOLEH - langkah
+ * pengikatan identitas pada tolehan terakhir tantangan keaktifan. Sama dengan
+ * decideAttendance, hanya ambangnya FACE_MATCH_THRESHOLD_TOLEH (lihat
+ * alasannya di faceAuthNative.ts).
+ */
+export async function decideTurnedFace(
+  probe: Float32Array | number[],
+): Promise<AttendanceVerdict> {
+  const similarity = await similarityToEnrollment(probe);
+  if (similarity === null) return { kind: "not-enrolled" };
+
+  const threshold = FACE_MATCH_THRESHOLD_TOLEH;
   return similarity >= threshold
     ? { kind: "accepted", similarity, threshold }
     : { kind: "rejected", similarity, threshold };

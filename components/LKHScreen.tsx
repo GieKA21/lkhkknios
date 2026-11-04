@@ -37,12 +37,14 @@ import {
     NoFaceDetectedError,
     PoorQualityFaceError,
     warmUpFaceModel,
+  getFaceEmbeddingToleh,
+  MIN_YAW_FOTO_TOLEH_DEG,
 } from "../utils/faceAuthNative";
 import {
     isEnrolled,
     syncEnrollmentFromServer,
 } from "../utils/faceEnrollment";
-import { decideAttendance } from "../utils/verificationAgent";
+import { decideAttendance, decideTurnedFace } from "../utils/verificationAgent";
 import FaceEnrollmentModal from "./FaceEnrollmentModal";
 import { useFaceQualityGate } from "../hooks/useFaceQualityGate";
 import { useLivenessChallenge } from "../hooks/useLivenessChallenge";
@@ -417,10 +419,77 @@ export default function LKHScreen() {
     // karenanya konfigurasi sesi kamera.
   }, [photoOutput]);
 
+  // Hasil pemeriksaan wajah menoleh, hanya ditampilkan bila TAMPILKAN_YAW.
+  const [ikatUji, setIkatUji] = useState<string | null>(null);
+
+  /**
+   * PENGIKATAN IDENTITAS PADA TOLEHAN TERAKHIR - dipanggil hook liveness
+   * selagi pengguna masih menahan kepalanya menoleh. Alasannya di
+   * jalankanIkatToleh (hooks/useLivenessChallenge.ts): tanpa ini, tolehan
+   * dapat dikerjakan orang lain lalu diganti foto pemilik di layar HP.
+   *
+   *   "ulangi" - foto tidak terpakai: wajahnya sudah lurus kembali saat
+   *              terpotret, atau kurang jelas. Tolehan terakhir diulang.
+   *   "gagal"  - wajah yang menoleh BUKAN pemilik akun.
+   */
+  const handleTurnBind = useCallback(async (): Promise<HasilPengikatan> => {
+    try {
+      const photoFile = await photoOutput.capturePhotoToFile(
+        { enableShutterSound: false },
+        {},
+      );
+      let hasil: { embedding: Float32Array; yaw: number };
+      try {
+        hasil = await getFaceEmbeddingToleh(`file://${photoFile.filePath}`);
+      } catch (error) {
+        if (
+          error instanceof NoFaceDetectedError ||
+          error instanceof MultipleFacesDetectedError ||
+          error instanceof PoorQualityFaceError
+        ) {
+          if (TAMPILKAN_YAW) setIkatUji(`ikat toleh: ulangi (${error.message.slice(0, 40)})`);
+          return "ulangi";
+        }
+        throw error;
+      }
+      if (Math.abs(hasil.yaw) < MIN_YAW_FOTO_TOLEH_DEG) {
+        if (TAMPILKAN_YAW) setIkatUji(`ikat toleh: ulangi (yaw foto ${Math.round(hasil.yaw)})`);
+        return "ulangi";
+      }
+
+      const verdict = await decideTurnedFace(hasil.embedding);
+      if (verdict.kind === "not-enrolled") {
+        setIsCameraVisible(false);
+        setIsEnrollmentVisible(true);
+        return "gagal";
+      }
+      if (TAMPILKAN_YAW) {
+        setIkatUji(
+          `ikat toleh: ${verdict.similarity.toFixed(3)} ${verdict.kind === "accepted" ? "lolos" : "TOLAK"} (yaw foto ${Math.round(hasil.yaw)})`,
+        );
+      }
+      if (verdict.kind === "rejected") {
+        pengikatanAtRef.current = null;
+        Alert.alert(
+          "Wajah Tidak Cocok",
+          `Wajah yang menoleh tidak cocok dengan wajah terdaftar pada akun ini ` +
+            `(kemiripan ${(verdict.similarity * 100).toFixed(2)}%). ` +
+            `Absensi harus dikerjakan oleh pemilik akun.`,
+        );
+        return "gagal";
+      }
+      return "ok";
+    } catch (error) {
+      console.error("Gagal mengikat identitas pada tolehan terakhir", error);
+      return "ulangi";
+    }
+  }, [photoOutput]);
+
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi) DAN identitasnya terbukti pemilik akun
-  // - lihat hooks/useLivenessChallenge.ts.
-  const liveness = useLivenessChallenge(handleBindIdentity);
+  // - pada tolehan terakhir dan lagi pada wajah lurus. Lihat
+  // hooks/useLivenessChallenge.ts.
+  const liveness = useLivenessChallenge(handleBindIdentity, handleTurnBind);
   // Satu callback menyuapi frame ke quality gate DAN liveness (keduanya baca
   // yaw/bounds yang sama). onFacesDetected dipanggil per-frame di thread JS &
   // tiap hook memanggil setState; tanpa throttle, komponen ini dirender ulang
@@ -1511,6 +1580,9 @@ export default function LKHScreen() {
                 {yawUji}
               </Text>
             )}
+            {TAMPILKAN_YAW && ikatUji !== null && (
+              <Text style={[styles.yawUji, styles.ikatUji]}>{ikatUji}</Text>
+            )}
 
             <View style={styles.cameraBottomArea}>
               {/* Kemajuan tantangan sebagai strip, bukan "(langkah 2/5)" yang
@@ -2304,6 +2376,12 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.6)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
+  },
+  // Hasil pemeriksaan wajah menoleh - lihat handleTurnBind.
+  ikatUji: {
+    top: 170,
+    right: 90,
+    fontSize: 15,
   },
   // Angka yaw untuk mengukur SISI_YAW_POSITIF - lihat TAMPILKAN_YAW.
   yawUji: {
