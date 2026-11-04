@@ -312,13 +312,13 @@ async function detectSingleFace(photoUri: string): Promise<Face> {
   return faces[0];
 }
 
-function qualityGate(face: Face): void {
+function qualityGate(face: Face, abaikanYaw = false): void {
   const reasons: string[] = [];
 
   if (face.bounds.width / face.frameWidth < MIN_FACE_SIZE_RATIO) {
     reasons.push("wajah terlalu kecil/jauh dari kamera");
   }
-  if (Math.abs(face.yawAngle) > MAX_YAW_DEG) {
+  if (!abaikanYaw && Math.abs(face.yawAngle) > MAX_YAW_DEG) {
     reasons.push("kepala terlalu menoleh ke samping");
   }
   if (Math.abs(face.pitchAngle) > MAX_PITCH_DEG) {
@@ -619,10 +619,30 @@ function l2Normalize(vec: Float32Array): Float32Array {
  * when the photo isn't usable.
  */
 export async function getFaceEmbedding(photoUri: string): Promise<Float32Array> {
+  return (await embedDariFoto(photoUri, false)).embedding;
+}
+
+/**
+ * KHUSUS CABANG UJI uji/skor-toleh. Sama persis dengan getFaceEmbedding,
+ * kecuali batas yaw gerbang mutu dilewati, karena yang hendak diukur justru
+ * kemiripan wajah yang sedang menoleh. Yaw foto ikut dikembalikan supaya
+ * terlihat apakah jepretannya benar-benar menangkap wajah menoleh.
+ */
+export async function getFaceEmbeddingToleh(
+  photoUri: string,
+): Promise<{ embedding: Float32Array; yaw: number }> {
+  const { embedding, face } = await embedDariFoto(photoUri, true);
+  return { embedding, yaw: face.yawAngle };
+}
+
+async function embedDariFoto(
+  photoUri: string,
+  abaikanYaw: boolean,
+): Promise<{ embedding: Float32Array; face: Face }> {
   await cleanupLegacyKeysOnce();
 
   const face = await detectSingleFace(photoUri);
-  qualityGate(face);
+  qualityGate(face, abaikanYaw);
 
   // Without both eye landmarks the canonical alignment cannot be computed.
   // Fail here rather than falling back to a plain box crop: an unaligned
@@ -679,7 +699,7 @@ export async function getFaceEmbedding(photoUri: string): Promise<Float32Array> 
         ` aligned ${alignedInfo} nan ${nanCount}/${embedding.length}]`,
     );
   }
-  return embedding;
+  return { embedding, face };
 }
 
 /**

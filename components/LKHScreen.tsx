@@ -38,6 +38,7 @@ import {
     NoFaceDetectedError,
     PoorQualityFaceError,
     warmUpFaceModel,
+  getFaceEmbeddingToleh,
 } from "../utils/faceAuthNative";
 import {
     isEnrolled,
@@ -216,6 +217,50 @@ const ABAIKAN_PERIODE_KKN = false;
  *  "yaw uji:" tidak ditemukan pada bundel JS-nya. */
 const TAMPILKAN_YAW = true;
 
+// Catatan uji skor tolehan - lihat handleTolehan. Disimpan lokal saja.
+const KUNCI_SKOR_TOLEH = "uji_skor_toleh";
+type SampelToleh = {
+  pada: string;
+  platform: string;
+  tolehanKe: number;
+  yawFrame: number;
+  yawFoto: number | null;
+  skor: number | null;
+  galat: string | null;
+};
+async function bacaSkorToleh(): Promise<SampelToleh[]> {
+  try {
+    const isi = await AsyncStorage.getItem(KUNCI_SKOR_TOLEH);
+    return isi ? (JSON.parse(isi) as SampelToleh[]) : [];
+  } catch {
+    return [];
+  }
+}
+async function catatSkorToleh(baru: SampelToleh): Promise<SampelToleh[]> {
+  const semua = [...(await bacaSkorToleh()), baru];
+  await AsyncStorage.setItem(KUNCI_SKOR_TOLEH, JSON.stringify(semua));
+  return semua;
+}
+function teksSkorToleh(semua: SampelToleh[]): string {
+  const baris = semua.map((b, i) =>
+    [
+      i + 1,
+      b.pada,
+      b.platform,
+      b.tolehanKe,
+      b.yawFrame,
+      b.yawFoto ?? "",
+      b.skor === null ? "" : b.skor.toFixed(4),
+      b.galat ?? "",
+    ].join(","),
+  );
+  return [
+    `Uji skor wajah menoleh (n = ${semua.length})`,
+    "no,waktu,platform,tolehan,yaw_frame,yaw_foto,skor,galat",
+    ...baris,
+  ].join("\n");
+}
+
 /**
  * Ukuran lingkaran status tanggal dalam PIKSEL TETAP (bukan persen). Di Android
  * New Architecture (Fabric), View ber-width/height persen + borderRadius besar
@@ -352,6 +397,58 @@ export default function LKHScreen() {
   // basi - lihat PENGIKATAN_TTL_MS.
   const pengikatanAtRef = useRef<number | null>(null);
 
+  // ---- UJI SKOR TOLEHAN (cabang uji/skor-toleh, jangan digabung) ----------
+  // Tiap tolehan sah memicu satu jepretan diam-diam; kemiripannya dengan
+  // wajah terdaftar dicatat untuk menentukan apakah identitas dapat diperiksa
+  // pada wajah yang SEDANG menoleh - penutup celah tukar wajah antara
+  // tolehan terakhir dan pengikatan. Jepretan berikutnya menunggu yang ini.
+  const tolehBerjalanRef = useRef<Promise<void> | null>(null);
+  const [skorToleh, setSkorToleh] = useState<string | null>(null);
+  const [jumlahSkor, setJumlahSkor] = useState(0);
+  const handleTolehan = useCallback(
+    (tolehanKe: number, yawFrame: number) => {
+      if (!TAMPILKAN_YAW || tolehBerjalanRef.current) return;
+      const kerja = (async () => {
+        const baris: SampelToleh = {
+          pada: new Date().toISOString(),
+          platform: `${Platform.OS} ${Platform.Version}`,
+          tolehanKe,
+          yawFrame: Math.round(yawFrame),
+          yawFoto: null,
+          skor: null,
+          galat: null,
+        };
+        try {
+          const photoFile = await photoOutput.capturePhotoToFile(
+            { enableShutterSound: false },
+            {},
+          );
+          const hasil = await getFaceEmbeddingToleh(`file://${photoFile.filePath}`);
+          baris.yawFoto = Math.round(hasil.yaw);
+          const verdict = await decideAttendance(hasil.embedding);
+          if (verdict.kind !== "not-enrolled") baris.skor = verdict.similarity;
+        } catch (error) {
+          // Nama kelas galat tidak bertahan dari minifikasi, jadi pesannya
+          // yang dicatat - dipendekkan dan tanpa koma supaya CSV tetap rapi.
+          baris.galat = (error instanceof Error ? error.message : String(error))
+            .replace(/,/g, ";")
+            .slice(0, 80);
+        }
+        const semua = await catatSkorToleh(baris);
+        setJumlahSkor(semua.length);
+        setSkorToleh(
+          baris.skor !== null
+            ? `toleh ${tolehanKe}: ${baris.skor.toFixed(3)} (yaw foto ${baris.yawFoto})`
+            : `toleh ${tolehanKe}: gagal (${baris.galat ?? "belum terdaftar"})`,
+        );
+      })();
+      tolehBerjalanRef.current = kerja.finally(() => {
+        tolehBerjalanRef.current = null;
+      });
+    },
+    [photoOutput],
+  );
+
   /**
    * PENGIKATAN IDENTITAS - dipanggil hook liveness saat pengguna menghadap
    * tengah sesudah kedua tolehan selesai.
@@ -367,6 +464,8 @@ export default function LKHScreen() {
    */
   const handleBindIdentity = useCallback(async (): Promise<HasilPengikatan> => {
     try {
+      // Jangan berebut kamera dengan jepretan uji skor tolehan.
+      await tolehBerjalanRef.current;
       // enableShutterSound: false - jepretan ini TIDAK diminta pengguna, ia
       // bagian dalam dari tantangan keaktifan. Membunyikan rana di sini
       // membuat satu kali absen terdengar memotret beberapa kali dan
@@ -429,7 +528,7 @@ export default function LKHScreen() {
   // Deteksi keaktifan: shutter absen terkunci sampai pengguna menyelesaikan
   // tantangan gerak (menoleh dua sisi) DAN identitasnya terbukti pemilik akun
   // - lihat hooks/useLivenessChallenge.ts.
-  const liveness = useLivenessChallenge(handleBindIdentity);
+  const liveness = useLivenessChallenge(handleBindIdentity, handleTolehan);
   // Satu callback menyuapi frame ke quality gate DAN liveness (keduanya baca
   // yaw/bounds yang sama). onFacesDetected dipanggil per-frame di thread JS &
   // tiap hook memanggil setState; tanpa throttle, komponen ini dirender ulang
@@ -1051,6 +1150,7 @@ export default function LKHScreen() {
 
     setIsProcessingFace(true);
     try {
+      await tolehBerjalanRef.current;
       // Titik waktu untuk uji waktu verifikasi - lihat utils/ukurWaktu.ts.
       const t0 = performance.now();
       const photoFile = await photoOutput.capturePhotoToFile({}, {});
@@ -1547,6 +1647,33 @@ export default function LKHScreen() {
                 yaw uji: {yawUji > 0 ? "+" : ""}
                 {yawUji}
               </Text>
+            )}
+            {TAMPILKAN_YAW && (
+              <TouchableOpacity
+                style={styles.skorUji}
+                onPress={async () =>
+                  Share.share({ message: teksSkorToleh(await bacaSkorToleh()) })
+                }
+                onLongPress={() =>
+                  Alert.alert("Hapus skor tolehan?", `${jumlahSkor} catatan akan dihapus.`, [
+                    { text: "Batal", style: "cancel" },
+                    {
+                      text: "Hapus",
+                      style: "destructive",
+                      onPress: async () => {
+                        await AsyncStorage.removeItem(KUNCI_SKOR_TOLEH);
+                        setJumlahSkor(0);
+                        setSkorToleh(null);
+                      },
+                    },
+                  ])
+                }
+              >
+                <Text style={styles.skorUjiTeks}>
+                  {skorToleh ?? "skor toleh: -"}
+                  {`\n${jumlahSkor} tercatat - ketuk bagikan, tahan hapus`}
+                </Text>
+              </TouchableOpacity>
             )}
 
             <View style={styles.cameraBottomArea}>
@@ -2341,6 +2468,22 @@ const styles = StyleSheet.create({
     textShadowColor: "rgba(0,0,0,0.6)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
+  },
+  // Catatan uji skor tolehan - lihat handleTolehan.
+  skorUji: {
+    position: "absolute",
+    left: 16,
+    top: 170,
+    right: 90,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  skorUjiTeks: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "600",
   },
   // Angka yaw untuk mengukur SISI_YAW_POSITIF - lihat TAMPILKAN_YAW.
   yawUji: {

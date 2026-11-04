@@ -397,7 +397,12 @@ const MENDESAK: readonly string[] = [MSG.binding, MSG.passed];
 
 export function useLivenessChallenge(
   onBind?: () => Promise<HasilPengikatan>,
+  // KHUSUS CABANG UJI uji/skor-toleh: dipanggil tiap kali satu tolehan sah
+  // tercatat, untuk mengukur kemiripan wajah yang sedang menoleh.
+  onTolehan?: (tolehanKe: number, yawFrame: number) => void,
 ) {
+  const onTolehanRef = useRef(onTolehan);
+  onTolehanRef.current = onTolehan;
   // State mesin disimpan di ref, bukan useState: onFacesDetected dipanggil
   // per frame dan harus stabil (tidak dibuat ulang tiap render), jadi ia
   // tidak boleh menutup nilai state yang bisa basi. useState hanya untuk
@@ -741,6 +746,7 @@ export function useLivenessChallenge(
           }
 
           tandaTerakhirRef.current = tanda;
+          onTolehanRef.current?.(n + 1, yaw);
           tolehanKeRef.current = n + 1;
           setStep(n + 1);
           perintahSejakRef.current = Date.now();
