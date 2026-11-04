@@ -224,7 +224,10 @@ const SISI_YAW_POSITIF: Record<string, "kiri" | "kanan" | null> = {
   // ke kanan memberi yaw positif (+16, +23), dan tantangan lulus dengan
   // mengikuti panah.
   ios: "kanan",
-  android: null,
+  // Diukur 4 November 2026, Redmi Note 6 Pro (Android 9, APK cabang
+  // uji/tanda-yaw yang menebak "kanan"): tantangan lulus dengan mengikuti
+  // panah, padahal langkah "lawan" pasti macet kalau tandanya terbalik.
+  android: "kanan",
 };
 
 const SISI_POSITIF_PLATFORM = SISI_YAW_POSITIF[Platform.OS] ?? null;
