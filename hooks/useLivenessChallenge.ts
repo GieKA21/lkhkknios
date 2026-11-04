@@ -221,7 +221,7 @@ function undiRencana(): ArahDiminta[] {
 /** Sisi tubuh pengguna saat yaw bernilai positif, per platform. */
 const SISI_YAW_POSITIF: Record<string, "kiri" | "kanan" | null> = {
   ios: "kanan", // TEBAKAN cabang uji - diganti hasil ukur
-  android: "kanan", // TEBAKAN cabang uji - diganti hasil ukur
+  android: "kiri", // diukur 4 Nov 2026 (Redmi Note 6 Pro): tebakan "kanan" terbalik
 };
 
 const SISI_POSITIF_PLATFORM = SISI_YAW_POSITIF[Platform.OS] ?? null;
