@@ -35,12 +35,24 @@ async function hapusSesi() {
   ]);
 }
 
+const HIJAU = "#0B753A";
+const WARNA_TIDAK_AKTIF = "#4B6455";
+
+// Label "Login Peserta" dan "Login Dosen" dipertahankan apa adanya: naskah
+// skripsi menyebut kedua label ini secara harfiah.
+const PILIHAN_PERAN = [
+  { kunci: "peserta", label: "Login Peserta", ikon: "user-graduate" },
+  { kunci: "dosen", label: "Login Dosen", ikon: "chalkboard-teacher" },
+];
+
 export default function LoginScreen({ onLoginSuccess }) {
   const [activeTab, setActiveTab] = useState("peserta");
   const [nim, setNim] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // Kolom yang sedang diisi diberi garis tepi hijau.
+  const [fokus, setFokus] = useState(null);
 
   const handleLogin = async () => {
     if (!nim || !password) {
@@ -208,7 +220,7 @@ export default function LoginScreen({ onLoginSuccess }) {
           Alert.alert(
             "Gagal Login",
             "Akun ini tidak terdaftar sebagai peserta KKN. Bila Anda dosen " +
-              "pembimbing, masuk lewat tab Pembimbing.\n\n" +
+              "pembimbing, masuk lewat tab Login Dosen.\n\n" +
               `[debug] ${err?.message ?? err}`,
           );
           return;
@@ -334,7 +346,7 @@ export default function LoginScreen({ onLoginSuccess }) {
         Alert.alert(
           "Gagal Login",
           "Akun ini tidak terdaftar sebagai dosen pembimbing. Bila Anda " +
-            "peserta KKN, masuk lewat tab Peserta.\n\n" +
+            "peserta KKN, masuk lewat tab Login Peserta.\n\n" +
             `[debug] ${profileErr?.message ?? profileErr}`,
         );
         return;
@@ -370,57 +382,56 @@ export default function LoginScreen({ onLoginSuccess }) {
             <Text style={styles.appTitle}>Laporan Kerja Harian KKN</Text>
           </View>
 
-          <View style={styles.tabContainer}>
-            <TouchableOpacity
-              style={[
-                styles.tabButton,
-                activeTab === "peserta"
-                  ? styles.tabActivePeserta
-                  : styles.tabInactive,
-              ]}
-              onPress={() => setActiveTab("peserta")}
-              activeOpacity={0.8}
-            >
-              <FontAwesome5
-                name="book"
-                size={16}
-                color="#FFF"
-                style={styles.tabIcon}
-              />
-              <Text style={styles.tabText}>Login Peserta</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.tabButton,
-                activeTab === "dosen"
-                  ? styles.tabActiveDosen
-                  : styles.tabInactive,
-              ]}
-              onPress={() => setActiveTab("dosen")}
-              activeOpacity={0.8}
-            >
-              <FontAwesome5
-                name="graduation-cap"
-                size={16}
-                color="#FFF"
-                style={styles.tabIcon}
-              />
-              <Text style={styles.tabText}>Login Dosen</Text>
-            </TouchableOpacity>
+          {/* PEMILIH PERAN. Dahulu dua tombol ini sama-sama hijau (#0B753A
+              untuk yang aktif, #1F8B4C untuk yang tidak), sehingga sulit
+              dibedakan mana yang sedang dipilih - dan salah pilih berujung
+              pada login yang ditolak. Sekarang yang aktif hijau pekat
+              berhuruf putih, yang tidak aktif menyatu dengan alasnya. */}
+          <Text style={styles.roleLabel}>Pilih jenis akun</Text>
+          <View style={styles.roleTrack}>
+            {PILIHAN_PERAN.map((pilihan) => {
+              const aktif = activeTab === pilihan.kunci;
+              return (
+                <TouchableOpacity
+                  key={pilihan.kunci}
+                  style={[styles.roleOption, aktif && styles.roleOptionActive]}
+                  onPress={() => setActiveTab(pilihan.kunci)}
+                  disabled={isLoading}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: aktif }}
+                  accessibilityLabel={pilihan.label}
+                >
+                  <FontAwesome5
+                    name={pilihan.ikon}
+                    size={15}
+                    color={aktif ? "#FFFFFF" : WARNA_TIDAK_AKTIF}
+                    style={styles.roleIcon}
+                  />
+                  <Text style={[styles.roleText, aktif && styles.roleTextActive]}>
+                    {pilihan.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           <Text style={styles.instructionText}>
             {activeTab === "dosen"
-              ? "Silahkan Masukkan NIP dan Password Portal Anda."
-              : "Silahkan Masukkan NIM dan Password Portal Anda."}
+              ? "Masukkan NIP dan password Portal Anda."
+              : "Masukkan NIM dan password Portal Anda."}
           </Text>
 
-          <View style={styles.inputContainer}>
+          <View
+            style={[
+              styles.inputContainer,
+              fokus === "nim" && styles.inputContainerFocused,
+            ]}
+          >
             <FontAwesome5
               name="user"
               size={18}
-              color="#666"
+              color={fokus === "nim" ? HIJAU : "#666"}
               style={styles.inputIconLeft}
             />
             <TextInput
@@ -429,16 +440,23 @@ export default function LoginScreen({ onLoginSuccess }) {
               placeholderTextColor="#999"
               value={nim}
               onChangeText={setNim}
+              onFocus={() => setFokus("nim")}
+              onBlur={() => setFokus(null)}
               keyboardType="number-pad"
               autoCapitalize="none"
             />
           </View>
 
-          <View style={styles.inputContainer}>
+          <View
+            style={[
+              styles.inputContainer,
+              fokus === "password" && styles.inputContainerFocused,
+            ]}
+          >
             <FontAwesome5
               name="key"
               size={18}
-              color="#666"
+              color={fokus === "password" ? HIJAU : "#666"}
               style={styles.inputIconLeft}
             />
             <TextInput
@@ -447,6 +465,8 @@ export default function LoginScreen({ onLoginSuccess }) {
               placeholderTextColor="#999"
               value={password}
               onChangeText={setPassword}
+              onFocus={() => setFokus("password")}
+              onBlur={() => setFokus(null)}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
             />
@@ -478,7 +498,11 @@ export default function LoginScreen({ onLoginSuccess }) {
                   color="#FFF"
                   style={{ marginRight: 8 }}
                 />
-                <Text style={styles.loginButtonText}>LOGIN</Text>
+                <Text style={styles.loginButtonText}>
+                  {activeTab === "dosen"
+                    ? "Masuk sebagai Dosen"
+                    : "Masuk sebagai Peserta"}
+                </Text>
               </View>
             )}
           </TouchableOpacity>
@@ -533,50 +557,62 @@ const styles = StyleSheet.create({
     color: "#333",
     textAlign: "center",
   },
-  tabContainer: {
-    flexDirection: "row",
-    marginBottom: 16,
-    borderRadius: 8,
-    overflow: "hidden",
+  roleLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#5F6F65",
+    textAlign: "center",
+    marginBottom: 8,
   },
-  tabButton: {
+  roleTrack: {
+    flexDirection: "row",
+    backgroundColor: "#E6F0E8",
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 14,
+  },
+  roleOption: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    minHeight: 44,
+    paddingHorizontal: 6,
+    borderRadius: 9,
   },
-  tabActivePeserta: {
-    backgroundColor: "#0B753A",
+  roleOptionActive: {
+    backgroundColor: HIJAU,
   },
-  tabActiveDosen: {
-    backgroundColor: "#0B753A",
+  roleIcon: {
+    marginRight: 7,
   },
-  tabInactive: {
-    backgroundColor: "#1F8B4C",
-  },
-  tabIcon: {
-    marginRight: 6,
-  },
-  tabText: {
-    color: "#FFF",
+  roleText: {
+    color: WARNA_TIDAK_AKTIF,
     fontWeight: "600",
     fontSize: 13,
+  },
+  roleTextActive: {
+    color: "#FFFFFF",
+    fontWeight: "700",
   },
   instructionText: {
     fontSize: 13,
     color: "#444",
     textAlign: "center",
-    marginBottom: 20,
+    marginBottom: 16,
   },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
     borderColor: "#CCC",
-    borderRadius: 8,
+    borderRadius: 10,
     marginBottom: 14,
     backgroundColor: "#FAFAFA",
+  },
+  inputContainerFocused: {
+    borderColor: HIJAU,
+    backgroundColor: "#FFFFFF",
   },
   inputIconLeft: {
     paddingHorizontal: 12,
@@ -591,8 +627,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   loginButton: {
-    backgroundColor: "#0E783D",
-    borderRadius: 8,
+    backgroundColor: HIJAU,
+    borderRadius: 10,
     paddingVertical: 14,
     alignItems: "center",
     justifyContent: "center",
