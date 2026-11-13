@@ -1,0 +1,20 @@
+Uji skor wajah menoleh (n = 14)
+# Android 16 (API 36), build cabang uji/skor-toleh, 4 November 2026.
+# Pemilik wajah terdaftar yang menoleh (sesi pemilik). Mode TOLEH.
+# Catatan: yaw_foto -3..5 pada semua skor - foto terambil SESUDAH kepala
+# kembali ke tengah, jadi skor ini sebenarnya skor wajah lurus.
+no,waktu,jenis,platform,tolehan,yaw_frame,yaw_foto,skor,galat
+1,2026-11-04T12:40:59.852Z,toleh,android 36,1,25,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+2,2026-11-04T12:41:01.178Z,toleh,android 36,2,35,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+3,2026-11-04T12:41:02.529Z,toleh,android 36,3,-40,,,Foto kurang jelas untuk verifikasi (mata kiri tidak cukup terbuka; mata kanan ti
+4,2026-11-04T12:41:03.943Z,toleh,android 36,4,32,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+5,2026-11-04T12:41:12.325Z,toleh,android 36,1,37,-1,0.8547,
+6,2026-11-04T12:41:13.530Z,toleh,android 36,2,25,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+7,2026-11-04T12:41:14.745Z,toleh,android 36,3,-42,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+8,2026-11-04T12:41:22.990Z,toleh,android 36,1,36,3,0.8624,
+9,2026-11-04T12:41:24.335Z,toleh,android 36,2,23,3,0.8673,
+10,2026-11-04T12:41:25.650Z,toleh,android 36,3,-39,5,0.8556,
+11,2026-11-04T12:41:34.848Z,toleh,android 36,1,27,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+12,2026-11-04T12:41:36.817Z,toleh,android 36,2,25,,,Foto kurang jelas untuk verifikasi (mata kanan tidak cukup terbuka). Coba lagi d
+13,2026-11-04T12:41:38.115Z,toleh,android 36,3,-39,,,Foto kurang jelas untuk verifikasi (mata kiri tidak cukup terbuka; mata kanan ti
+14,2026-11-04T12:41:39.364Z,toleh,android 36,4,41,-3,0.9027,

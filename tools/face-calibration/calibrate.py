@@ -163,17 +163,25 @@ class Detector:
             )
         )
 
-    def detect(self, image: Image.Image) -> FaceGeom | None:
+    def detect(self, image: Image.Image, pilih: str = "terbesar") -> FaceGeom | None:
         arr = np.asarray(image.convert("RGB"))
         res = self._det.detect(
             self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=arr)
         )
         if not res.detections:
             return None
-        # Ambil wajah terbesar kalau ada lebih dari satu.
-        det = max(res.detections, key=lambda d: d.bounding_box.width * d.bounding_box.height)
-        bb = det.bounding_box
         h, w = arr.shape[:2]
+        if pilih == "tengah":
+            # Dataset publik seperti LFW memusatkan orang yang dilabeli di
+            # tengah gambar; wajah lain di latar bisa saja lebih besar.
+            def jarak(d):
+                bb = d.bounding_box
+                return (bb.origin_x + bb.width / 2 - w / 2) ** 2 + (bb.origin_y + bb.height / 2 - h / 2) ** 2
+            det = min(res.detections, key=jarak)
+        else:
+            # Ambil wajah terbesar kalau ada lebih dari satu.
+            det = max(res.detections, key=lambda d: d.bounding_box.width * d.bounding_box.height)
+        bb = det.bounding_box
         # Urutan keypoint BlazeFace: [mata kanan, mata kiri, hidung, mulut,
         # tragion kanan, tragion kiri] - "kanan/kiri" dari sudut pandang orang
         # di foto, jadi mata kanan muncul di sisi KIRI gambar.

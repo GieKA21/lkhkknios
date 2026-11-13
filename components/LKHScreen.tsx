@@ -706,7 +706,13 @@ export default function LKHScreen() {
   // dari profil server dan bisa terisi SESUDAH render pertama. Tanpa itu,
   // penjadwalan pertama memakai periode kosong - yang dianggap fail-open -
   // dan pengingatnya terlanjur terpasang untuk hari itu.
+  //
+  // isCheckingRecords menahan efek ini sampai catatan absen PASTI. Sebelum
+  // itu records masih {} dan hari ini terbaca "belum absen", sehingga setiap
+  // kali layar ini dimuat (juga tiap pindah tab) pengingat terpasang untuk
+  // mahasiswa yang sebenarnya sudah absen - dilaporkan 13 November 2026.
   useEffect(() => {
+    if (isCheckingRecords) return;
     scheduleDailyAttendanceReminders(
       !!records[toDateKey(new Date())],
       isWithinKKNPeriod(new Date()),
@@ -719,7 +725,7 @@ export default function LKHScreen() {
     // berjalan sesudah seluruh komponen selesai dirender. Satu-satunya yang
     // dibacanya dan bisa berubah adalah kknPeriod, dan itu sudah didaftarkan.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, kknPeriod]);
+  }, [records, kknPeriod, isCheckingRecords]);
 
   // Sinkron OTOMATIS senyap: begitu ada laporan offline yang belum terkirim,
   // coba kirim sekali di latar (tanpa modal/alert), di samping tombol manual.
