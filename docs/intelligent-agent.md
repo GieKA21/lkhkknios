@@ -66,7 +66,7 @@ agen.
         │                                        ▼ (jepret foto still)                 │
         │  (3) PERSEPSI still + KEPUTUSAN                                               │
         │  getFaceEmbedding  →  embedding 192-d                                         │
-        │  decideAttendance  →  median-of-N similarity vs ambang 0.47                   │
+        │  decideAttendance  →  median-of-N similarity vs ambang 0.673                   │
         │        │                                                                     │
         │        ▼ aktuator                                                            │
         │   accepted → simpan absen   |   rejected → tolak   |   not-enrolled → daftar  │
