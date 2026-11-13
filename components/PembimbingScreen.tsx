@@ -17,7 +17,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { profilePhotoHeaders, profilePhotoUrl } from "../utils/api";
+import {
+  pembimbingPhotoUrl,
+  profilePhotoHeaders,
+  profilePhotoUrl,
+} from "../utils/api";
 import {
   fetchPembimbingDates,
   fetchStudentLkh,
@@ -144,6 +148,12 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
   const [nama, setNama] = useState("Memuat...");
   const [nip, setNip] = useState("");
   const [prodi, setProdi] = useState("");
+  // Foto dosen di kartu kepala. Sumbernya sama dengan tab Profil
+  // (ProfilDosenScreen): nama berkas pegFoto yang disimpan saat login.
+  // fotoDosenGagal mengembalikan avatar ke inisial bila fotonya tidak termuat,
+  // supaya tidak tertinggal lingkaran kosong.
+  const [fotoDosen, setFotoDosen] = useState("");
+  const [fotoDosenGagal, setFotoDosenGagal] = useState(false);
   const [students, setStudents] = useState<Student[]>([]);
   const [dayFill, setDayFill] = useState<Record<string, DayFill>>({});
   const [loading, setLoading] = useState(true);
@@ -194,6 +204,8 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
         setNama(p.nama || "Pembimbing");
         setNip(p.nip || savedNip || "");
         setProdi(p.prodi || "");
+        setFotoDosen(typeof p.foto === "string" ? p.foto : "");
+        setFotoDosenGagal(false);
       }
 
       if (!savedNip || !token) {
@@ -338,9 +350,20 @@ export default function PembimbingScreen({ onLogout }: PembimbingScreenProps) {
       >
         <View style={styles.glassShadow}>
           <View style={styles.headerCard}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(nama)}</Text>
-            </View>
+            {fotoDosen && !fotoDosenGagal ? (
+              <Image
+                source={{
+                  uri: pembimbingPhotoUrl(fotoDosen),
+                  headers: profilePhotoHeaders(tokenRef.current || ""),
+                }}
+                style={styles.avatarPhoto}
+                onError={() => setFotoDosenGagal(true)}
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{initials(nama)}</Text>
+              </View>
+            )}
             <View style={styles.headerInfo}>
               <Text style={styles.roleBadge}>DOSEN PEMBIMBING</Text>
               <Text style={styles.name}>{nama}</Text>
@@ -716,6 +739,13 @@ const styles = StyleSheet.create({
     marginRight: 16,
   },
   avatarText: { color: "#FFF", fontSize: 22, fontWeight: "700" },
+  avatarPhoto: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#E4E9EF",
+    marginRight: 16,
+  },
   headerInfo: { flex: 1 },
   roleBadge: {
     fontSize: 11,
