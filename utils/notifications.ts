@@ -58,15 +58,54 @@ function todayAt(hour: number, minute: number): Date {
  * Pembatalan di dua baris pertama dijalankan LEBIH DAHULU dan tanpa syarat,
  * jadi pengingat yang terlanjur terjadwal sebelum periodenya habis ikut
  * tercabut begitu fungsi ini dipanggil lagi.
+ *
+ * KENAPA PEMANGGILAN DIANTREKAN. Dilaporkan dari perangkat pada 13 November
+ * 2026: pengingat tetap muncul walau hari itu sudah absen. Fungsi ini
+ * dipanggil beberapa kali berdekatan (catatan absen dan periode KKN termuat
+ * bergantian), dan dahulu pemanggilan-pemanggilan itu berjalan bersamaan:
+ * pemanggilan lama yang masih menunggu izin notifikasi menjadwalkan
+ * pengingat SESUDAH pemanggilan baru membatalkannya. Dengan antrean, tiap
+ * pemanggilan baru mulai setelah yang sebelumnya tuntas, sehingga keputusan
+ * pemanggilan TERAKHIR yang berlaku.
  */
-export async function scheduleDailyAttendanceReminders(
+let antrean: Promise<void> = Promise.resolve();
+
+export function scheduleDailyAttendanceReminders(
+  hasAttendedToday: boolean,
+  dalamPeriodeKKN: boolean,
+): Promise<void> {
+  const giliran = antrean.then(() =>
+    jadwalkanPengingat(hasAttendedToday, dalamPeriodeKKN),
+  );
+  // Kegagalan satu giliran tidak boleh memutus antrean berikutnya.
+  antrean = giliran.catch(() => {});
+  return giliran;
+}
+
+/** Buang pengingat absen yang SUDAH tampil di panel notifikasi. */
+async function singkirkanPengingatTampil(): Promise<void> {
+  const tampil = await Notifications.getPresentedNotificationsAsync();
+  for (const n of tampil) {
+    const id = n.request.identifier;
+    if (id === MORNING_REMINDER_ID || id === EVENING_REMINDER_ID) {
+      await Notifications.dismissNotificationAsync(id).catch(() => {});
+    }
+  }
+}
+
+async function jadwalkanPengingat(
   hasAttendedToday: boolean,
   dalamPeriodeKKN: boolean,
 ): Promise<void> {
   await Notifications.cancelScheduledNotificationAsync(MORNING_REMINDER_ID).catch(() => {});
   await Notifications.cancelScheduledNotificationAsync(EVENING_REMINDER_ID).catch(() => {});
 
-  if (hasAttendedToday || !dalamPeriodeKKN) return;
+  if (hasAttendedToday || !dalamPeriodeKKN) {
+    // Pengingat pukul 10.00 yang terlanjur tampil tidak lagi benar begitu
+    // absen tersimpan; jangan dibiarkan menagih di panel notifikasi.
+    await singkirkanPengingatTampil().catch(() => {});
+    return;
+  }
 
   const granted = await requestNotificationPermissions();
   if (!granted) return;
